@@ -1,0 +1,17 @@
+libaudio-scan-perl (0.42-0ex1) claire; urgency=low
+
+  * New upstream release
+
+ -- Carl Fürstenberg <carl@excito.com>  Tue, 13 Oct 2009 13:23:19 +0200
+
+libaudio-scan-perl (0.38-1ex1) claire; urgency=low
+
+  * fix bug in mp4.c which checks wrongly for © 
+
+ -- Carl Fürstenberg <carl@excito.com>  Wed, 07 Oct 2009 17:41:10 +0200
+
+libaudio-scan-perl (0.38-1) unstable; urgency=low
+
+  * Initial Release.
+
+ -- Carl Fürstenberg <carl@excito.com>  Wed, 7 Oct 2009 16:00:58 +0200
