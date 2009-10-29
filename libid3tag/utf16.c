@@ -16,7 +16,7 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
- * $Id: utf16.c 458 2009-10-12 21:59:41Z andy $
+ * $Id: /sd/opensource/trunk/Audio-Scan/libid3tag/utf16.c 59610 2009-10-17T01:38:41.390924Z andy  $
  */
 
 # ifdef HAVE_CONFIG_H
@@ -77,7 +77,7 @@ id3_ucs4_t *id3_utf16_ucs4duplicate(id3_utf16_t const *utf16)
   id3_ucs4_t *ucs4;
 
 #ifdef _MSC_VER
-  Newx(ucs4, id3_utf16_length(utf16) + 1, id3_ucs4_t);
+  New(0, ucs4, id3_utf16_length(utf16) + 1, id3_ucs4_t);
 #else
   ucs4 = malloc((id3_utf16_length(utf16) + 1) * sizeof(*ucs4));
 #endif
@@ -256,7 +256,7 @@ id3_ucs4_t *id3_utf16_deserialize(id3_byte_t const **ptr, id3_length_t length,
   end = *ptr + (length & ~1);
 
 #ifdef _MSC_VER
-  Newx(utf16, length / 2 + 1, id3_utf16_t);
+  New(0, utf16, length / 2 + 1, id3_utf16_t);
 #else
   utf16 = malloc((length / 2 + 1) * sizeof(*utf16));
 #endif
@@ -291,7 +291,7 @@ id3_ucs4_t *id3_utf16_deserialize(id3_byte_t const **ptr, id3_length_t length,
   *utf16ptr = 0;
 
 #ifdef _MSC_VER
-  Newx(ucs4, id3_utf16_length(utf16) + 1, id3_ucs4_t);
+  New(0, ucs4, id3_utf16_length(utf16) + 1, id3_ucs4_t);
 #else
   ucs4 = malloc((id3_utf16_length(utf16) + 1) * sizeof(*ucs4));
 #endif

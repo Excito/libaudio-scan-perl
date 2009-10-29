@@ -16,7 +16,7 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
- * $Id: file.c 283 2009-04-23 15:40:38Z andy $
+ * $Id: /sd/opensource/trunk/Audio-Scan/libid3tag/file.c 59812 2009-10-26T18:17:23.248767Z andy  $
  */
 
 # ifdef HAVE_CONFIG_H
@@ -45,25 +45,6 @@
 # include "file.h"
 # include "tag.h"
 # include "field.h"
-
-struct filetag {
-  struct id3_tag *tag;
-  unsigned long location;
-  id3_length_t length;
-};
-
-struct id3_file {
-  FILE *iofile;
-  enum id3_file_mode mode;
-  char *path;
-
-  int flags;
-
-  struct id3_tag *primary;
-
-  unsigned int ntags;
-  struct filetag *tags;
-};
 
 enum {
   ID3_FILE_FLAG_ID3V1 = 0x0001
@@ -102,7 +83,7 @@ struct id3_tag *read_tag(FILE *iofile, id3_length_t size)
   struct id3_tag *tag = 0;
 
 #ifdef _MSC_VER
-  Newx(data, size, id3_byte_t);
+  New(0, data, size, id3_byte_t);
 #else
   data = malloc(size);
 #endif
@@ -400,7 +381,7 @@ struct id3_file *new_file(FILE *iofile, enum id3_file_mode mode,
   struct id3_file *file;
 
 #ifdef _MSC_VER
-  Newx(file, 1, struct id3_file);
+  New(0, file, 1, struct id3_file);
 #else
   file = malloc(sizeof(*file));
 #endif
@@ -411,7 +392,7 @@ struct id3_file *new_file(FILE *iofile, enum id3_file_mode mode,
   file->mode    = mode;
 #ifdef _MSC_VER
   if (path) {
-	Newx(file->path, strlen(path) + 1, char);
+	New(0, file->path, strlen(path) + 1, char);
 	strcpy_s(file->path, strlen(path) + 1, path);
   }
   else {
@@ -637,7 +618,7 @@ int v2_write(struct id3_file *file,
   offset = file->tags ? file->tags[0].length : 0;
   datalen = st.st_size - offset;
 #ifdef _MSC_VER
-  Newx(buffer, datalen, char);
+  New(0, buffer, datalen, char);
 #else
   if ((buffer = (char *) malloc(datalen)) == NULL)
     return -1;
@@ -697,7 +678,7 @@ int id3_file_update(struct id3_file *file)
   v2size = id3_tag_render(file->primary, 0);
   if (v2size) {
 #ifdef _MSC_VER
-    Newx(id3v2, v2size, id3_byte_t);
+    New(0, id3v2, v2size, id3_byte_t);
 #else
     id3v2 = malloc(v2size);
 #endif

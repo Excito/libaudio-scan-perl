@@ -48,7 +48,7 @@ error "gperf generated tables don't work with this execution character set. Plea
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
- * $Id: frametype.c 418 2009-09-09 17:50:29Z andy $
+ * $Id: /sd/opensource/trunk/Audio-Scan/libid3tag/frametype.c 58528 2009-09-09T17:49:19.200663Z andy  $
  */
 
 # ifdef HAVE_CONFIG_H

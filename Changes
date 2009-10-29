@@ -1,11 +1,37 @@
 Revision history for Audio::Scan
 
-0.42
+0.45    2009-10-26 15:00:00
+        - Bug 8380, Read multiple ID3 tags when more than one is found
+          in a file, such as ID3v1 + ID3v2.
+        - Fixed MP3 find_frame when looking for audio_offset + 1 and
+          a Xing TOC is present.  Xing TOC is ignored for this special
+          case.
+        - Fixed FLAC find_frame when file has ID3v2 tags.
+        - Bug 14883, added audio_size info to WAV and AIFF.
+        - Fixed crash on invalid FLAC picture block.
+        - Fixed bug in Ogg bitrate calculation.
+        - Fixed tests to work on old Perls without Encode.
+        - Max buffer size got accidentally reset to 10M in 0.44.
+        - Added utility methods: get_types, extensions_for, type_for (Frank Terbeck)
+
+0.44    2009-10-16 22:00:00
+        - Bug 14788, ASF: Fixed crasher when reading multiple integer tags.
+        - Changed Newx/Newxz calls to use older New/Newz API to support older Perls.
+
+0.43    2009-10-16 15:00:00
+        - Increase max buffer size yet again (to 20MB), this time someone had 16MB
+          of artwork!
+        - libid3tag: Don't re-generate frametype.c, compat.c, and genre.dat as this
+          can fail if gperf is not available.
+
+0.42    2009-10-13 10:45:00
         - Bug 14728, fixed issue in libid3tag where default ID3v2.3 UTF-16 byte
           order was set to big-endian instead of little-endian when no BOM
           was present.  Several other tag readers also default to little-endian
           so this appears to be the de-facto standard, even though the v2.3 spec
           says all Unicode text must have a BOM.
+        - Bug 14705, Fixed libid3tag to return frames parsed so far when it runs into
+          an invalid frame.
         - Bug 14658, MP4: fixed signed char issue on some PPC platforms.
 
 0.41    2009-10-12 10:30:00

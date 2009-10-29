@@ -4,8 +4,6 @@ use ExtUtils::MakeMaker qw(WriteMakefile);
 use File::Spec::Functions;
 use Getopt::Long;
 
-require 5.8.8;
-
 my (@INC, @LIBPATH, @LIBS);
 my $MYEXTLIB;
 
@@ -26,7 +24,7 @@ sub MY::postamble {
     my $postamble =<<'END';
 
 libid3tag/Makefile:
-	cd libid3tag && CC="$(CC)" CFLAGS="$(OPTIMIZE) $(CCFLAGS) $(CCCDLFLAGS)" LDFLAGS="$(LDFLAGS)" ./configure --disable-dependency-tracking $(EXTRA_CONF)
+	cd libid3tag && CC="$(CC)" CFLAGS="$(OPTIMIZE) $(CCFLAGS) $(CCCDLFLAGS)" LDFLAGS="$(LDFLAGS)" /bin/sh configure --disable-dependency-tracking $(EXTRA_CONF)
 
 clean::
 	-cd libid3tag && make distclean

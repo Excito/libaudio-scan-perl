@@ -69,6 +69,7 @@ libid3tag/msvc++/Makefile.in
 libid3tag/parse.c
 libid3tag/parse.h
 libid3tag/patches/allow-id-space.patch
+libid3tag/patches/debug-trace.patch
 libid3tag/patches/itunes-non-syncsafe.patch
 libid3tag/patches/libid3tag-0.15.1b-64bit-long.patch
 libid3tag/patches/libid3tag-0.15.1b-a_capella.patch
@@ -77,9 +78,13 @@ libid3tag/patches/libid3tag-0.15.1b-fix_overflow.patch
 libid3tag/patches/libid3tag-0.15.1b-tag.patch
 libid3tag/patches/libid3tag-0.15.1b-unknown-encoding.patch
 libid3tag/patches/libid3tag-0.15.1b-utf16.patch
+libid3tag/patches/parse-partial.patch
+libid3tag/patches/public-file-api.patch
 libid3tag/patches/read-no-seek.patch
 libid3tag/patches/seek-after-fdopen.patch
 libid3tag/patches/translate-pic.patch
+libid3tag/patches/utf16-le-default.patch
+libid3tag/patches/v2.3-xsop.patch
 libid3tag/README
 libid3tag/README.patches
 libid3tag/render.c
@@ -100,7 +105,6 @@ libid3tag/version.h
 Makefile.PL
 MANIFEST			This list of files
 README
-README.sparc
 README.win32
 Scan.xs
 src/aac.c
@@ -131,6 +135,7 @@ t/11mac.t
 t/12aiff.t
 t/13mp4.t
 t/14aac.t
+t/99util.t
 t/aac/id3v2.aac
 t/aac/leading-junk.aac
 t/aac/mono.aac
@@ -144,6 +149,7 @@ t/asf/wma-live.wma
 t/asf/wma92-32k.wma
 t/asf/wma92-48k-pro.wma
 t/asf/wma92-lossless.wma
+t/asf/wma92-multiple-tags.wma
 t/asf/wma92-mbr.wma
 t/asf/wma92-vbr.wma
 t/asf/wma92-voice.wma
@@ -183,6 +189,7 @@ t/mp3/no-tags-vbri-stereo.mp3
 t/mp3/v1-iso-8859-1.mp3
 t/mp3/v1.1.mp3
 t/mp3/v1.mp3
+t/mp3/v2-v1.mp3
 t/mp3/v2.2-itunes81.mp3
 t/mp3/v2.2-mpeg20-xing.mp3
 t/mp3/v2.2-multiple-comm.mp3
@@ -204,6 +211,7 @@ t/mp3/v2.4-ape.mp3
 t/mp3/v2.4-apic-jpg.mp3
 t/mp3/v2.4-apic-multiple.mp3
 t/mp3/v2.4-apic-png.mp3
+t/mp3/v2.4-corrupt-frame.mp3
 t/mp3/v2.4-geob-multiple.mp3
 t/mp3/v2.4-geob.mp3
 t/mp3/v2.4-iso-8859-1.mp3

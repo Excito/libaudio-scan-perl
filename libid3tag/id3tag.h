@@ -19,11 +19,13 @@
  * If you would like to negotiate alternate licensing terms, you may do
  * so by contacting: Underbit Technologies, Inc. <info@underbit.com>
  *
- * $Id: id3tag.h 283 2009-04-23 15:40:38Z andy $
+ * $Id: /sd/opensource/trunk/Audio-Scan/libid3tag/id3tag.h 59812 2009-10-26T18:17:23.248767Z andy  $
  */
 
 # ifndef LIBID3TAG_ID3TAG_H
 # define LIBID3TAG_ID3TAG_H
+
+#include <stdio.h>
 
 #ifdef _MSC_VER
 #include "../include/pstdint.h"
@@ -249,6 +251,25 @@ enum id3_file_mode {
   ID3_FILE_MODE_READONLY = 0,
   ID3_FILE_MODE_READWRITE,
   ID3_FILE_MODE_READONLY_NOSEEK
+};
+
+struct filetag {
+  struct id3_tag *tag;
+  unsigned long location;
+  id3_length_t length;
+};
+
+struct id3_file {
+  FILE *iofile;
+  enum id3_file_mode mode;
+  char *path;
+
+  int flags;
+
+  struct id3_tag *primary;
+
+  unsigned int ntags;
+  struct filetag *tags;
 };
 
 struct id3_file *id3_file_open(char const *, enum id3_file_mode);

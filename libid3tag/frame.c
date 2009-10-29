@@ -16,7 +16,7 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
- * $Id: frame.c 321 2009-06-02 15:04:01Z andy $
+ * $Id: /sd/opensource/trunk/Audio-Scan/libid3tag/frame.c 59610 2009-10-17T01:38:41.390924Z andy  $
  */
 
 # ifdef HAVE_CONFIG_H
@@ -216,7 +216,7 @@ struct id3_frame *unparseable(char const *id, id3_byte_t const **ptr,
   id3_byte_t *mem;
 
 #ifdef _MSC_VER
-  Newx(mem, length ? length : 1, id3_byte_t);
+  New(0, mem, length ? length : 1, id3_byte_t);
 #else
   mem = malloc(length ? length : 1);
 #endif
@@ -376,16 +376,21 @@ struct id3_frame *id3_frame_parse(id3_byte_t const **ptr, id3_length_t length,
   else {  /* ID3v2.4 */
     if (length < 10)
       goto fail;
+    
+    DEBUG_TRACE("v2.4 frame: %c%c%c%c\n", id[0], id[1], id[2], id[3]);
 
     *ptr += 4;
     size  = id3_parse_syncsafe(ptr, 4);
     flags = id3_parse_uint(ptr, 2);
+    
+    DEBUG_TRACE("  size %d flags %d\n", size, flags);
     
     // iTunes writes non-syncsafe length integers, check for this here
     *ptr -= 6;
     if ( id3_parse_uint(ptr, 4) & 0x80 ) {
       *ptr -= 4;
       size = id3_parse_uint(ptr, 4);
+      DEBUG_TRACE("  found bad iTunes length, size adjusted to %d\n", size);
     }
     *ptr += 2;
 
@@ -432,7 +437,7 @@ struct id3_frame *id3_frame_parse(id3_byte_t const **ptr, id3_length_t length,
 
   if ((flags & ID3_FRAME_FLAG_UNSYNCHRONISATION) && end - data > 0) {
 #ifdef _MSC_VER
-    Newx(mem, end - data, id3_byte_t);
+    New(0, mem, end - data, id3_byte_t);
 #else
     mem = malloc(end - data);
 #endif
