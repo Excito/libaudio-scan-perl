@@ -1,3 +1,15 @@
+libaudio-scan-perl (0.75-1) claire; urgency=low
+
+  * New upstream release
+
+ -- Carl Fürstenberg <carl@excito.com>  Wed, 07 Apr 2010 13:09:13 +0200
+
+libaudio-scan-perl (0.62-1) claire; urgency=low
+
+  * New upstream release
+
+ -- Carl Fürstenberg <carl@excito.com>  Tue, 16 Mar 2010 17:29:45 +0100
+
 libaudio-scan-perl (0.45-0ex2) claire; urgency=low
 
   * fix doc install

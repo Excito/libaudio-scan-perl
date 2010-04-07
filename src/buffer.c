@@ -18,7 +18,7 @@
 
 #define  BUFFER_MAX_CHUNK  0x1400000
 #define  BUFFER_MAX_LEN    0x1400000
-#define  BUFFER_ALLOCSZ    0x008000
+#define  BUFFER_ALLOCSZ    0x002000
 
 #define UnsignedToFloat(u) (((double)((long)(u - 2147483647L - 1))) + 2147483648.0)
 
@@ -27,14 +27,19 @@
 void
 buffer_init(Buffer *buffer, uint32_t len)
 {
-  if (!len)
-    len = 4096;
+  if (!len) len = BUFFER_ALLOCSZ;
 
   buffer->alloc = 0;
   New(0, buffer->buf, (int)len, u_char);
   buffer->alloc = len;
   buffer->offset = 0;
   buffer->end = 0;
+  buffer->cache = 0;
+  buffer->ncached = 0;
+
+#ifdef AUDIO_SCAN_DEBUG
+  fprintf(stderr, "Buffer allocated with %d bytes\n", len);
+#endif
 }
 
 /* Frees any memory used for the buffer. */
@@ -43,6 +48,9 @@ void
 buffer_free(Buffer *buffer)
 {
   if (buffer->alloc > 0) {
+#ifdef AUDIO_SCAN_DEBUG
+    fprintf(stderr, "Buffer high water mark: %d\n", buffer->alloc);
+#endif
     memset(buffer->buf, 0, buffer->alloc);
     buffer->alloc = 0;
     Safefree(buffer->buf);
@@ -59,6 +67,8 @@ buffer_clear(Buffer *buffer)
 {
   buffer->offset = 0;
   buffer->end = 0;
+  buffer->cache = 0;
+  buffer->ncached = 0;
 }
 
 /* Appends data to the buffer, expanding it if necessary. */
@@ -79,6 +89,9 @@ buffer_compact(Buffer *buffer)
    * data to the beginning.
    */
   if (buffer->offset > MIN(buffer->alloc, BUFFER_MAX_CHUNK)) {
+#ifdef AUDIO_SCAN_DEBUG
+    fprintf(stderr, "Buffer compacting (%d -> %d)\n", buffer->offset + buffer_len(buffer), buffer_len(buffer));
+#endif
     Move(buffer->buf + buffer->offset, buffer->buf, (int)(buffer->end - buffer->offset), u_char);
     buffer->end -= buffer->offset;
     buffer->offset = 0;
@@ -111,7 +124,7 @@ buffer_append_space(Buffer *buffer, uint32_t len)
 
 restart:
   /* If there is enough space to store all data, store it now. */
-  if (buffer->end + len < buffer->alloc) {
+  if (buffer->end + len <= buffer->alloc) {
     p = buffer->buf + buffer->end;
     buffer->end += len;
     return p;
@@ -122,10 +135,17 @@ restart:
     goto restart;
 
   /* Increase the size of the buffer and retry. */
-  newlen = roundup(buffer->alloc + len, BUFFER_ALLOCSZ);
+  if (buffer->alloc + len < 4096)
+    newlen = (buffer->alloc + len) * 2;
+  else
+    newlen = buffer->alloc + len + 4096;
+  
   if (newlen > BUFFER_MAX_LEN)
     croak("buffer_append_space: alloc %u too large (max %u)",
         newlen, BUFFER_MAX_LEN);
+#ifdef AUDIO_SCAN_DEBUG
+  fprintf(stderr, "Buffer extended to %d\n", newlen);
+#endif
   Renew(buffer->buf, (int)newlen, u_char);
   buffer->alloc = newlen;
   goto restart;
@@ -231,27 +251,53 @@ buffer_ptr(Buffer *buffer)
   return buffer->buf + buffer->offset;
 }
 
-/* Dumps the contents of the buffer to stderr. */
-
+// Dumps the contents of the buffer to stderr.
+// Based on: http://sws.dett.de/mini/hexdump-c/
+#ifdef AUDIO_SCAN_DEBUG
 void
-buffer_dump(Buffer *buffer, uint32_t len)
+buffer_dump(Buffer *buffer, uint32_t size)
 {
-  uint32_t i;
-  u_char *ucp = buffer->buf;
+  unsigned char *data = buffer->buf;
+  unsigned char c;
+  int i = 1;
+  int n;
+  char bytestr[4] = {0};
+  char hexstr[ 16*3 + 5] = {0};
+  char charstr[16*1 + 5] = {0};
   
-  if (!len) {
-    len = buffer->end - buffer->offset;
+  if (!size) {
+    size = buffer->end - buffer->offset;
+  }
+  
+  for (n = buffer->offset; n < buffer->offset + size; n++) {
+    c = data[n];
+
+    /* store hex str (for left side) */
+    snprintf(bytestr, sizeof(bytestr), "%02x ", c);
+    strncat(hexstr, bytestr, sizeof(hexstr)-strlen(hexstr)-1);
+
+    /* store char str (for right side) */
+    if (isalnum(c) == 0) {
+      c = '.';
+    }
+    snprintf(bytestr, sizeof(bytestr), "%c", c);
+    strncat(charstr, bytestr, sizeof(charstr)-strlen(charstr)-1);
+
+    if (i % 16 == 0) { 
+      /* line completed */
+      fprintf(stderr, "%-50.50s  %s\n", hexstr, charstr);
+      hexstr[0] = 0;
+      charstr[0] = 0;
+    }
+    i++;
   }
 
-  for (i = buffer->offset; i < buffer->offset + len; i++) {
-    fprintf(stderr, "%02x ", ucp[i]);
-
-    if ((i-buffer->offset) % 16 == 15)
-      fprintf(stderr, "\r\n");
+  if (strlen(hexstr) > 0) {
+    /* print rest of buffer if not empty */
+    fprintf(stderr, "%-50.50s  %s\n", hexstr, charstr);
   }
-
-  fprintf(stderr, "\r\n");
 }
+#endif
 
 // Useful functions from bufaux.c
 
@@ -382,6 +428,41 @@ buffer_get_int24(Buffer *buffer)
 
   if (buffer_get_int24_ret(&ret, buffer) == -1)
     croak("buffer_get_int24: buffer error");
+
+  return (ret);
+}
+
+uint32_t
+get_u24le(const void *vp)
+{
+  const u_char *p = (const u_char *)vp;
+  uint32_t v;
+
+  v  = (uint32_t)p[2] << 16;
+  v |= (uint32_t)p[1] << 8;
+  v |= (uint32_t)p[0];
+
+  return (v);
+}
+
+int
+buffer_get_int24_le_ret(uint32_t *ret, Buffer *buffer)
+{
+  u_char buf[3];
+
+  if (buffer_get_ret(buffer, (char *) buf, 3) == -1)
+    return (-1);
+  *ret = get_u24le(buf);
+  return (0);
+}
+
+uint32_t
+buffer_get_int24_le(Buffer *buffer)
+{
+  uint32_t ret;
+
+  if (buffer_get_int24_le_ret(&ret, buffer) == -1)
+    croak("buffer_get_int24_le: buffer error");
 
   return (ret);
 }
@@ -545,21 +626,125 @@ buffer_put_char(Buffer *buffer, int value)
   buffer_append(buffer, &ch, 1);
 }
 
-// XXX supports U+0000 ~ U+FFFF only.
-void
-buffer_get_utf16le_as_utf8(Buffer *buffer, Buffer *utf8, uint32_t len)
+// Read a null-terminated UTF-8 string
+// Caller must manage utf8 buffer (init/free)
+uint32_t
+buffer_get_utf8(Buffer *buffer, Buffer *utf8, uint32_t len_hint)
 {
   int i = 0;
+  unsigned char *bptr = buffer_ptr(buffer);
   
-  // Sanity check length
-  if ( len % 2 ) {
-    croak("buffer_get_utf16le_as_utf8: bad length %d", len);
+  if (!len_hint) return 0;
+  
+  for (i = 0; i < len_hint; i++) {
+    uint8_t c = bptr[i];
+    
+    buffer_put_char(utf8, c);
+    
+    if (c == 0) {
+      i++;
+      break;
+    }
   }
   
-  buffer_init(utf8, len);
+  // Consume string + null
+  buffer_consume(buffer, i);
+  
+  // Add null if one wasn't provided
+  if ( (utf8->buf + utf8->end - 1)[0] != 0 ) {
+    buffer_put_char(utf8, 0);
+  }
+  
+#ifdef AUDIO_SCAN_DEBUG
+  //DEBUG_TRACE("utf8 buffer:\n");
+  //buffer_dump(utf8, 0);
+#endif
+  
+  return i;
+}
+
+// Read a null-terminated latin1 string, converting to UTF-8 in supplied buffer
+// len_hint is the length of the latin1 string, utf8 may end up being larger
+// or possibly less if we hit a null.
+// Caller must manage utf8 buffer (init/free)
+uint32_t
+buffer_get_latin1_as_utf8(Buffer *buffer, Buffer *utf8, uint32_t len_hint)
+{
+  int i = 0;
+  unsigned char *bptr = buffer_ptr(buffer);
+  
+  if (!len_hint) return 0;
+  
+  // We may get a valid UTF-8 string in here from ID3v1 or
+  // elsewhere, if so we don't want to translate from ISO-8859-1
+  uint8_t is_utf8 = is_utf8_string(bptr, len_hint);
+  
+  for (i = 0; i < len_hint; i++) {
+    uint8_t c = bptr[i];
+    
+    if (is_utf8) {
+      buffer_put_char(utf8, c);
+    }
+    else {
+      // translate high chars from ISO-8859-1 to UTF-8
+      if (c < 0x80) {
+        buffer_put_char(utf8, c);
+      }
+      else if (c < 0xc0) {
+        buffer_put_char(utf8, 0xc2);
+        buffer_put_char(utf8, c);
+      }
+      else {
+        buffer_put_char(utf8, 0xc3);
+        buffer_put_char(utf8, c - 64);
+      }
+    }
+    
+    if (c == 0) {
+      i++;
+      break;
+    }
+  }
+  
+  // Consume string + null
+  buffer_consume(buffer, i);
+  
+  // Add null if one wasn't provided
+  if ( (utf8->buf + utf8->end - 1)[0] != 0 ) {
+    buffer_put_char(utf8, 0);
+  }
+  
+#ifdef AUDIO_SCAN_DEBUG
+  //DEBUG_TRACE("utf8 buffer:\n");
+  //buffer_dump(utf8, 0);
+#endif
+  
+  return i;
+}
+
+// Read a null-terminated UTF-16 string, converting to UTF-8 in the supplied buffer
+// Caller must manage utf8 buffer (init/free)
+// XXX supports U+0000 ~ U+FFFF only.
+uint32_t
+buffer_get_utf16_as_utf8(Buffer *buffer, Buffer *utf8, uint32_t len, uint8_t byteorder)
+{
+  int i = 0;
+  uint16_t wc = 0;
+  
+  if (!len) return 0;
   
   for (i = 0; i < len; i += 2) {
-    uint16_t wc = buffer_get_short_le(buffer);
+    // Check that we are not reading past the end of the buffer
+    if (len - i >= 2) {
+      wc = (byteorder == UTF16_BYTEORDER_LE)
+        ? buffer_get_short_le(buffer)
+        : buffer_get_short(buffer);
+    }
+    else {
+      DEBUG_TRACE("    UTF-16 text has an odd number of bytes, skipping final byte\n");
+      buffer_consume(buffer, 1);
+      wc = 0;
+    }
 
     if (wc < 0x80) {
       buffer_put_char(utf8, wc & 0xff);      
@@ -573,12 +758,24 @@ buffer_get_utf16le_as_utf8(Buffer *buffer, Buffer *utf8, uint32_t len)
       buffer_put_char(utf8, 0x80 | ((wc>>6) & 0x3f));
       buffer_put_char(utf8, 0x80 | (wc & 0x3f));
     }
+    
+    if (wc == 0) {
+      i += 2;
+      break;
+    }
   }
   
   // Add null if one wasn't provided
   if ( (utf8->buf + utf8->end - 1)[0] != 0 ) {
     buffer_put_char(utf8, 0);
   }
+  
+#ifdef AUDIO_SCAN_DEBUG
+  //DEBUG_TRACE("utf8 buffer:\n");
+  //buffer_dump(utf8, 0);
+#endif
+  
+  return i;
 }
       
 void
@@ -746,4 +943,71 @@ buffer_get_ieee_float(Buffer *buffer)
     return -f;
   else
     return f;
+}
+
+void
+put_u32(void *vp, uint32_t v)
+{
+	u_char *p = (u_char *)vp;
+
+	p[0] = (u_char)(v >> 24) & 0xff;
+	p[1] = (u_char)(v >> 16) & 0xff;
+	p[2] = (u_char)(v >> 8) & 0xff;
+	p[3] = (u_char)v & 0xff;
+}
+
+void
+buffer_put_int(Buffer *buffer, u_int value)
+{
+	char buf[4];
+
+	put_u32(buf, value);
+	buffer_append(buffer, buf, 4);
+}
+
+// Warnings:
+// Do not request more than 32 bits at a time.
+// Be careful if using other buffer functions without reading a multiple of 8 bits.
+uint32_t
+buffer_get_bits(Buffer *buffer, uint32_t bits)
+{
+  uint32_t mask = CacheMask[bits];
+  
+  //PerlIO_printf(PerlIO_stderr(), "get_bits(%d), in cache %d\n", bits, buffer->ncached);
+  
+  while (buffer->ncached < bits) {
+    // Need to read more data
+     
+    //PerlIO_printf(PerlIO_stderr(), "reading: ");
+    //buffer_dump(buffer, 1);
+    
+    buffer->cache = (buffer->cache << 8) | buffer_get_char(buffer);
+    buffer->ncached += 8;
+  }
+  
+  buffer->ncached -= bits;
+  
+  //PerlIO_printf(PerlIO_stderr(), "cache %x, ncached %d\n", buffer->cache, buffer->ncached);
+  //PerlIO_printf(PerlIO_stderr(), "return %x\n", (buffer->cache >> buffer->ncached) & mask);
+  
+  return (buffer->cache >> buffer->ncached) & mask;
+}
+
+uint32_t
+buffer_get_syncsafe(Buffer *buffer, uint8_t bytes)
+{
+  uint32_t value = 0;
+  unsigned char *bptr = buffer_ptr(buffer);
+
+  switch (bytes) {
+  case 5: value = (value << 4) | (*bptr++ & 0x0f);
+  case 4: value = (value << 7) | (*bptr++ & 0x7f);
+          value = (value << 7) | (*bptr++ & 0x7f);
+          value = (value << 7) | (*bptr++ & 0x7f);
+          value = (value << 7) | (*bptr++ & 0x7f);
+  }
+  
+  buffer_consume(buffer, bytes);
+
+  return value;
 }

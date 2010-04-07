@@ -28,9 +28,7 @@ get_aacinfo(PerlIO *infile, char *file, HV *info, HV *tags)
   
   buffer_init(&buf, AAC_BLOCK_SIZE);
   
-  PerlIO_seek(infile, 0, SEEK_END);
-  file_size = PerlIO_tell(infile);
-  PerlIO_seek(infile, 0, SEEK_SET);
+  file_size = _file_size(infile);
   
   my_hv_store( info, "file_size", newSVuv(file_size) );
   
@@ -56,8 +54,6 @@ get_aacinfo(PerlIO *infile, char *file, HV *info, HV *tags)
     }
     
     audio_offset += id3_size;
-    
-    my_hv_store( info, "id3_version", newSVpvf( "ID3v2.%d.%d", bptr[3], bptr[4] ) );
     
     DEBUG_TRACE("Found ID3 tag of size %d\n", id3_size);
     
@@ -95,8 +91,7 @@ get_aacinfo(PerlIO *infile, char *file, HV *info, HV *tags)
   
   my_hv_store( info, "audio_offset", newSVuv(audio_offset) );
   
-  // Parse ID3 at end, since we somehow can't use the filehandle anymore
-  // after libid3tag uses it
+  // Parse ID3 at end
   if (id3_size) {
     parse_id3(infile, file, info, tags, 0);
   }
