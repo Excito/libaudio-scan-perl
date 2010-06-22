@@ -1,5 +1,36 @@
 Revision history for Audio::Scan
 
+0.82    2010-05-24 13:15:00
+        - RT 57664: ID3: Add checks to avoid reading too much inside an invalid frame.
+        - FLAC: Seeking bug fixes.
+
+0.81    2010-05-15 10:40:00
+        - Fixed broken boolean values.
+
+0.80    2010-05-14 23:15:00
+        - ID3: Fixed unsynchronisation of v2.2/v2.3 tags.
+        - FLAC: Fixed several seeking bugs and improved seeking algorithm.
+        - MP3: Subtract LAME encoder delay/padding from total samples to obtain more
+          accurate song duration value.
+
+0.79    2010-04-27 14:30:00
+        - ID3: Bug 16079, fixed crash when reading empty TCON tag.
+        - Bug 16095, workaround Win32+filehandle bug where file pos could sometimes
+          be off-by-one after a PerlIO_read.
+
+0.78    2010-04-16 15:45:00
+        - ASF: Fixed various issues when seeking, now uses the ASF_Index object correctly.
+        - ASF: Refactored to clean up the code and make it more efficient.
+        - ID3: Bug 16073, properly handle illegal zero-byte frames.
+
+0.77    2010-04-14 11:30:00
+        - PerlIO_seek with SEEK_END sometimes does not work correctly, changed all seeks
+          to use SEEK_SET instead.
+
+0.76    2010-04-14 10:30:00
+        - APE: Bug 15992, fixed reading of APE tags when file also has a Lyricsv2 tag.
+        - APE: Bug 16056, fixed reading of APE tags with certain kinds of invalid tags.
+
 0.75    2010-04-02 15:50:00
         - ID3: Really fixed empty text field bug this time.
 

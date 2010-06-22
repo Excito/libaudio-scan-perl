@@ -16,9 +16,10 @@
 
 #include "buffer.h"
 
-#define  BUFFER_MAX_CHUNK  0x1400000
-#define  BUFFER_MAX_LEN    0x1400000
-#define  BUFFER_ALLOCSZ    0x002000
+#define  BUFFER_MAX_CHUNK       0x1400000
+#define  BUFFER_MAX_LEN         0x1400000
+#define  BUFFER_ALLOCSZ         0x002000
+#define  BUFFER_COMPACT_PERCENT 0.8
 
 #define UnsignedToFloat(u) (((double)((long)(u - 2147483647L - 1))) + 2147483648.0)
 
@@ -38,8 +39,21 @@ buffer_init(Buffer *buffer, uint32_t len)
   buffer->ncached = 0;
 
 #ifdef AUDIO_SCAN_DEBUG
-  fprintf(stderr, "Buffer allocated with %d bytes\n", len);
+  PerlIO_printf(PerlIO_stderr(), "Buffer allocated with %d bytes\n", len);
 #endif
+}
+
+/* Allows easy reuse of a buffer, will init or clear buffer if it already exists */
+
+void
+buffer_init_or_clear(Buffer *buffer, uint32_t len)
+{
+  if (!buffer->alloc) {
+    buffer_init(buffer, len);
+  }
+  else {
+    buffer_clear(buffer);
+  }
 }
 
 /* Frees any memory used for the buffer. */
@@ -49,7 +63,7 @@ buffer_free(Buffer *buffer)
 {
   if (buffer->alloc > 0) {
 #ifdef AUDIO_SCAN_DEBUG
-    fprintf(stderr, "Buffer high water mark: %d\n", buffer->alloc);
+    PerlIO_printf(PerlIO_stderr(), "Buffer high water mark: %d\n", buffer->alloc);
 #endif
     memset(buffer->buf, 0, buffer->alloc);
     buffer->alloc = 0;
@@ -85,12 +99,12 @@ static int
 buffer_compact(Buffer *buffer)
 {
   /*
-   * If the buffer is quite empty, but all data is at the end, move the
+   * If the buffer is at least BUFFER_COMPACT_PERCENT empty, move the
    * data to the beginning.
    */
-  if (buffer->offset > MIN(buffer->alloc, BUFFER_MAX_CHUNK)) {
+  if (buffer->offset * 1.0 / buffer->alloc >= BUFFER_COMPACT_PERCENT ) {
 #ifdef AUDIO_SCAN_DEBUG
-    fprintf(stderr, "Buffer compacting (%d -> %d)\n", buffer->offset + buffer_len(buffer), buffer_len(buffer));
+    PerlIO_printf(PerlIO_stderr(), "Buffer compacting (%d -> %d)\n", buffer->offset + buffer_len(buffer), buffer_len(buffer));
 #endif
     Move(buffer->buf + buffer->offset, buffer->buf, (int)(buffer->end - buffer->offset), u_char);
     buffer->end -= buffer->offset;
@@ -144,7 +158,7 @@ restart:
     croak("buffer_append_space: alloc %u too large (max %u)",
         newlen, BUFFER_MAX_LEN);
 #ifdef AUDIO_SCAN_DEBUG
-  fprintf(stderr, "Buffer extended to %d\n", newlen);
+  PerlIO_printf(PerlIO_stderr(), "Buffer extended to %d\n", newlen);
 #endif
   Renew(buffer->buf, (int)newlen, u_char);
   buffer->alloc = newlen;
@@ -285,7 +299,7 @@ buffer_dump(Buffer *buffer, uint32_t size)
 
     if (i % 16 == 0) { 
       /* line completed */
-      fprintf(stderr, "%-50.50s  %s\n", hexstr, charstr);
+      PerlIO_printf(PerlIO_stderr(), "%-50.50s  %s\n", hexstr, charstr);
       hexstr[0] = 0;
       charstr[0] = 0;
     }
@@ -294,7 +308,7 @@ buffer_dump(Buffer *buffer, uint32_t size)
 
   if (strlen(hexstr) > 0) {
     /* print rest of buffer if not empty */
-    fprintf(stderr, "%-50.50s  %s\n", hexstr, charstr);
+    PerlIO_printf(PerlIO_stderr(), "%-50.50s  %s\n", hexstr, charstr);
   }
 }
 #endif
@@ -672,12 +686,13 @@ buffer_get_latin1_as_utf8(Buffer *buffer, Buffer *utf8, uint32_t len_hint)
 {
   int i = 0;
   unsigned char *bptr = buffer_ptr(buffer);
+  uint8_t is_utf8;
   
   if (!len_hint) return 0;
   
   // We may get a valid UTF-8 string in here from ID3v1 or
   // elsewhere, if so we don't want to translate from ISO-8859-1
-  uint8_t is_utf8 = is_utf8_string(bptr, len_hint);
+  is_utf8 = is_utf8_string(bptr, len_hint);
   
   for (i = 0; i < len_hint; i++) {
     uint8_t c = bptr[i];
@@ -777,7 +792,8 @@ buffer_get_utf16_as_utf8(Buffer *buffer, Buffer *utf8, uint32_t len, uint8_t byt
   
   return i;
 }
-      
+
+#ifdef HAS_GUID
 void
 buffer_get_guid(Buffer *buffer, GUID *g)
 {
@@ -787,6 +803,7 @@ buffer_get_guid(Buffer *buffer, GUID *g)
   
   buffer_get(buffer, g->Data4, 8);
 }
+#endif
 
 int
 buffer_get_float32_le_ret(float *ret, Buffer *buffer)
@@ -943,6 +960,15 @@ buffer_get_ieee_float(Buffer *buffer)
     return -f;
   else
     return f;
+}
+
+void
+put_u16(void *vp, uint16_t v)
+{
+  u_char *p = (u_char *)vp;
+  
+	p[0] = (u_char)(v >> 8) & 0xff;
+	p[1] = (u_char)v & 0xff;
 }
 
 void
