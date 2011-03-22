@@ -1,16 +1,21 @@
 Source: libaudio-scan-perl
 Section: perl
 Priority: optional
-Build-Depends: debhelper (>= 7.2), perl (>= 5.6.0-12), zlib1g-dev, libtest-warn-perl
-Maintainer: Carl Fürstenberg <carl@excito.com>
+Build-Depends: debhelper (>= 8), perl, zlib1g-dev,
+ libtest-warn-perl
+Maintainer: Debian Perl Group <pkg-perl-maintainers@lists.alioth.debian.org>
+Uploaders: Jonathan Yu <jawnsy@cpan.org>,
+ Maximilian Gass <mxey@cloudconnected.org>,
+ Alessandro Ghedini <al3xbio@gmail.com>
 Standards-Version: 3.9.1
 Homepage: http://search.cpan.org/dist/Audio-Scan/
+Vcs-Svn: svn://svn.debian.org/pkg-perl/trunk/libaudio-scan-perl/
+Vcs-Browser: http://svn.debian.org/viewsvn/pkg-perl/trunk/libaudio-scan-perl/
 
 Package: libaudio-scan-perl
 Architecture: any
 Depends: ${perl:Depends}, ${shlibs:Depends}, ${misc:Depends}
-Description: XS parser for various music formats
- Audio::Scan is a C-based scanner for audio file metadata and tag information.
- It currently supports MP3 via an included version of libid3tag, MP4, Ogg
- Vorbis, FLAC (if libFLAC is installed), ASF, WAV, AIFF, Musepack, and
- Monkey's Audio.
+Description: module for reading metadata from common audio file formats
+ Audio::Scan is a Perl module for extracting file metadata and tag information
+ from several of the most common file formats, including: MP3, MP4, Musepack,
+ Ogg Vorbis, FLAC, ASF, WAV, AIFF, Monkey's Audio, and WavPack.
