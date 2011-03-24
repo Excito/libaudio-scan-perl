@@ -2,7 +2,7 @@ use strict;
 
 use File::Spec::Functions;
 use FindBin ();
-use Test::More tests => 68;
+use Test::More tests => 71;
 
 use Audio::Scan;
 
@@ -20,7 +20,7 @@ use Audio::Scan;
     is( $info->{file_size}, 5581, 'File size ok' );
     is( $info->{maximum_blocksize}, 4096, 'Max blocksize ok' );
     is( $info->{maximum_framesize}, 11535, 'Max framesize ok' );
-    is( $info->{md5}, '00428198e1ae27ad16754f75ff068752', 'MD5 ok' );
+    is( $info->{audio_md5}, '00428198e1ae27ad16754f75ff068752', 'MD5 ok' );
     is( $info->{minimum_blocksize}, 4096, 'Min blocksize ok' );
     is( $info->{minimum_framesize}, 16, 'Min framesize ok' );
     is( $info->{samplerate}, 44100, 'Samplerate ok' );
@@ -66,13 +66,15 @@ use Audio::Scan;
 
 # FLAC file with ID3 tag
 {
-    my $s = Audio::Scan->scan( _f('id3tagged.flac') );
+    my $s = Audio::Scan->scan( _f('id3tagged.flac'), { md5_size => 4096 } );
 
     my $info = $s->{info};
     my $tags = $s->{tags};
     
     is( $info->{id3_version}, 'ID3v2.3.0', 'ID3 tag ok' );
     is( $info->{audio_offset}, 10034, 'ID3 tag audio offset ok' );
+    is( $info->{audio_size}, 19966, 'Audio size ok' );
+    is( $info->{audio_md5}, '3a15e851a1dad49adcca57fe40ef6df6', 'Audio MD5 ok' );
     
     is( $tags->{TITLE}, 'Allegro Maestoso', 'ID3 tag Vorbis title ok' );
     is( $tags->{TIT2}, 'Allegro Maestoso', 'ID3 tag TIT2 ok' );
@@ -112,6 +114,7 @@ use Audio::Scan;
     my $pic = $tags->{ALLPICTURES}->[0];
     
     is( $pic->{image_data}, 37175, 'JPEG with AUDIO_SCAN_NO_ARTWORK ok ');
+    is( $pic->{offset}, 686, 'JPEG with AUDIO_SCAN_NO_ARTWORK offset ok' );
 }
 
 # File with very short duration, make sure bitrate is correct
@@ -179,7 +182,7 @@ use Audio::Scan;
     is( $info->{audio_offset}, 350, 'Bad streaminfo audio offset ok' );
     is( $info->{bitrate}, 268415, 'Bad streaminfo bitrate ok' );
     is( $info->{maximum_framesize}, 0, 'Bad streaminfo has no max framesize' );
-    is( $info->{md5}, '0' x 32, 'Bad streaminfo has no md5' );
+    is( $info->{audio_md5}, '0' x 32, 'Bad streaminfo has no md5' );
     is( $info->{minimum_framesize}, 0, 'Bad streaminfo has no min framesize' );
     
     # XXX These values are slightly short because we aren't reading

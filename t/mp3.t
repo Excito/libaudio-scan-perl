@@ -2,7 +2,8 @@ use strict;
 
 use File::Spec::Functions;
 use FindBin ();
-use Test::More tests => 370;
+use Test::More tests => 382;
+use Test::Warn;
 
 use Audio::Scan;
 
@@ -20,10 +21,11 @@ eval {
 
 # MPEG1, Layer 2, 192k / 44.1kHz
 {
-    my $s = Audio::Scan->scan( _f('no-tags-mp1l2.mp3') );
+    my $s = Audio::Scan->scan( _f('no-tags-mp1l2.mp3'), { md5_size => 4096 } );
     
     my $info = $s->{info};
     
+    is( $info->{audio_md5}, 'af946979d80b4503a618e4056be0f3e0', 'MPEG1, Layer 2 audio MD5 ok' );
     is( $info->{layer}, 2, 'MPEG1, Layer 2 ok' );
     is( $info->{bitrate}, 192000, 'MPEG1, Layer 2 bitrate ok' );
     is( $info->{file_size}, 82756, 'MPEG1, Layer 2 file size ok' );
@@ -32,10 +34,11 @@ eval {
 
 # MPEG2, Layer 2, 96k / 16khz mono
 {
-    my $s = Audio::Scan->scan( _f('no-tags-mp1l2-mono.mp3') );
+    my $s = Audio::Scan->scan( _f('no-tags-mp1l2-mono.mp3'), { md5_size => 32, md5_offset => 57936 } );
     
     my $info = $s->{info};
     
+    is( $info->{audio_md5}, '65a9c980ab1f99d467777d2f1d83ed7b', 'MPEG2, Layer 2 audio MD5 using md5_offset ok' );
     is( $info->{layer}, 2, 'MPEG2, Layer 2 ok' );
     is( $info->{bitrate}, 96000, 'MPEG2, Layer 2 bitrate ok' );
     is( $info->{samplerate}, 16000, 'MPEG2, Layer 2 samplerate ok' );
@@ -121,20 +124,14 @@ eval {
 
 # File with no audio frames, test is rejected properly
 {
-    # Hide stderr
-    no strict 'subs';
-    no warnings;
-    open OLD_STDERR, '>&', STDERR;
-    close STDERR;
-    
-    my $s = Audio::Scan->scan_info( _f('v2.3-no-audio-frames.mp3') );
+    my $s;
+    warning_like { $s = Audio::Scan->scan_info( _f('v2.3-no-audio-frames.mp3') ); }
+        [ qr/Unable to find any MP3 frames in file/ ],
+        'File with no audio frames ok';
     
     my $info = $s->{info};
     
-    is( $info->{bitrate}, undef, 'File with no audio frames ok' );
-    
-    # Restore stderr
-    open STDERR, '>&', OLD_STDERR;
+    is( $info->{bitrate}, undef, 'File with no audio frames has undef bitrate ok' );
 }
 
 # MPEG1 Xing mono file to test xing_offset works properly
@@ -631,6 +628,7 @@ eval {
     my $tags = $s->{tags};
     
     is( $tags->{APIC}->[3], 2103, 'ID3v2.4 APIC JPEG picture with AUDIO_SCAN_NO_ARTWORK=1 ok ');
+    is( $tags->{APIC}->[4], 351, 'ID3v2.4 APIC JPEG picture with AUDIO_SCAN_NO_ARTWORK=1 offset value ok' );
 }
 
 # Test setting AUDIO_SCAN_NO_ARTWORK to 0
@@ -1149,6 +1147,7 @@ eval {
     
     # This is not the actual length but it's OK since we don't unsync in no-artwork mode
     is( $tags->{APIC}->[3], 46240, 'v2.4 APIC unsync no-artwork length ok' );
+    is( !defined $tags->{APIC}->[4], 1, 'v2.4 APIC unsync no-artwork has no offset ok' );
 }
 
 {
@@ -1242,6 +1241,40 @@ eval {
     
     is( $tags->{TPE1}, 'Blue', 'APEv2/ID3v1 TPE1 ok' );
     is( $tags->{REPLAYGAIN_ALBUM_GAIN}, '-9.240000 dB', 'APEv2/ID3v1 REPLAYGAIN_ALBUM_GAIN ok' );
+}
+
+# Bug 16452, v2.2 with multiple TT2/TP1 that are empty null bytes
+{
+    my $s = Audio::Scan->scan( _f('v2.2-multiple-null-strings.mp3') );
+    my $tags = $s->{tags};
+    
+    ok( !ref $tags->{TIT2}, 'v2.2 multiple null strings in TT2 ok' );
+    ok( !ref $tags->{TPE1}, 'v2.2 multiple null strings in TP1 ok' );
+    is( $tags->{TIT2}, 'Klangstudie II', 'v2.2 multiple null strings TT2 value ok' );
+    is( $tags->{TPE1}, 'Herbert Eimert', 'v2.2 multiple null strings TP1 value ok' );
+}
+
+# Bad first samplerate (stream from Radio Paradise)
+{
+    my $s = Audio::Scan->scan( _f('bad-first-samplerate.mp3') );
+    my $info = $s->{info};
+    
+    is( $info->{samplerate}, 44100, 'Bad first samplerate detected as 44100 ok' );
+}
+
+# File with Xing tag but no LAME data, used to not include info->{vbr}
+{
+    my $s = Audio::Scan->scan( _f('v2.3-xing-no-lame.mp3') );
+    my $info = $s->{info};
+    
+    is( $info->{vbr}, 1, 'Xing without LAME marked as VBR ok' );
+}
+
+# File with extended header bit set but no extended header
+{
+    warning_like { Audio::Scan->scan( _f('v2.3-ext-header-invalid.mp3') ); }
+        [ qr/Error: Invalid ID3 extended header size/ ],
+        'v2.3 invalid extended header ok';
 }
 
 sub _f {    
