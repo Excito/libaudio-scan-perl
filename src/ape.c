@@ -54,18 +54,11 @@ int _ape_parse(ApeTag* tag) {
 int _ape_get_tag_info(ApeTag* tag) {
   int id3_length = 0;
   long data_size = 0;
-  long file_size = 0;
+  off_t file_size = 0;
   unsigned char compare[12];
   unsigned char *tmp_ptr;
   
-  /* Get file size */
-  if (PerlIO_seek(tag->fd, 0, SEEK_END) == -1) {
-    return _ape_error(tag, "Couldn't seek to end of file.", -1);
-  }
-
-  if ((file_size = PerlIO_tell(tag->fd)) == -1) {
-    return _ape_error(tag, "Couldn't tell file size.", -1);
-  } 
+  file_size = _file_size(tag->fd);
   
   /* No ape or id3 tag possible in this size */
   if (file_size < APE_MINIMUM_TAG_SIZE) {
@@ -129,9 +122,10 @@ int _ape_get_tag_info(ApeTag* tag) {
     return 0;
   }
   
-  tag->version    = buffer_get_int_le(&tag->tag_footer) / 1000;
-  tag->size       = buffer_get_int_le(&tag->tag_footer);
-  tag->item_count = buffer_get_int_le(&tag->tag_footer);
+  tag->version      = buffer_get_int_le(&tag->tag_footer) / 1000;
+  tag->size         = buffer_get_int_le(&tag->tag_footer);
+  tag->item_count   = buffer_get_int_le(&tag->tag_footer);
+  tag->footer_flags = buffer_get_int_le(&tag->tag_footer);
   tag->size += APE_TAG_FOOTER_LEN;
   data_size = tag->size - APE_TAG_HEADER_LEN - APE_TAG_FOOTER_LEN;
   
@@ -167,22 +161,18 @@ int _ape_get_tag_info(ApeTag* tag) {
   /* ---------- Read tag header and data --------------- */
   buffer_init(&tag->tag_header, APE_TAG_HEADER_LEN);
   buffer_init(&tag->tag_data, data_size);
-
-  if (!_check_buf(tag->fd, &tag->tag_header, APE_TAG_HEADER_LEN, APE_TAG_HEADER_LEN)) {
-    return _ape_error(tag, "Couldn't read tag header", -2);
-  }
-
-  if (!_check_buf(tag->fd, &tag->tag_data, data_size, data_size)) {
-    return _ape_error(tag, "Couldn't read tag data", -2);
-  }
-
-  if (tag->version > 1) { // not necessary?
+  
+  if (tag->footer_flags & APE_TAG_CONTAINS_HEADER) {
+    // Bug 15324, Header may or may not be present, only read if footer flag says it is
+    if (!_check_buf(tag->fd, &tag->tag_header, APE_TAG_HEADER_LEN, APE_TAG_HEADER_LEN)) {
+      return _ape_error(tag, "Couldn't read tag header", -2);
+    }
+    
     buffer_get(&tag->tag_header, &compare, 12);
     tmp_ptr = buffer_ptr(&tag->tag_header);
 
     /* Check tag header for validity */
     if (memcmp(APE_PREAMBLE, &compare, 8) || 
-       (memcmp(APE_HEADER_FLAGS, (tmp_ptr+9), 3) != 0) || 
        (tmp_ptr[8] != '\0' && tmp_ptr[8] != '\1')) {
       return _ape_error(tag, "Bad tag header flags", -3);
     }
@@ -194,6 +184,16 @@ int _ape_get_tag_info(ApeTag* tag) {
     if (tag->item_count != buffer_get_int_le(&tag->tag_header)) {
       return _ape_error(tag, "Header and footer item count do not match", -3);
     }
+  }
+  else {
+    // Skip junk where header should be, APE format is really stupid...
+    if (PerlIO_seek(tag->fd, APE_TAG_HEADER_LEN, SEEK_CUR) == -1) {
+      return _ape_error(tag, "Couldn't seek to tag offset", -1);
+    }
+  }
+
+  if (!_check_buf(tag->fd, &tag->tag_data, data_size, data_size)) {
+    return _ape_error(tag, "Couldn't read tag data", -2);
   }
   
   tag->flags |= APE_CHECKED_APE | APE_HAS_APE;
@@ -243,7 +243,8 @@ int _ape_parse_field(ApeTag* tag, uint32_t* offset) {
   uint32_t data_size = tag->size - APE_MINIMUM_TAG_SIZE;
   uint32_t size, flags, key_length = 0, val_length = 0;
   unsigned char *tmp_ptr;
-  SV *key, *value;
+  SV *key = NULL;
+  SV *value = NULL;
   
   size  = buffer_get_int_le(&tag->tag_data);
   flags = buffer_get_int_le(&tag->tag_data);
@@ -264,11 +265,33 @@ int _ape_parse_field(ApeTag* tag, uint32_t* offset) {
     tmp_ptr    += 1;
   }
   
-  DEBUG_TRACE("val_length: %d / size: %d\n", val_length, size);
+  DEBUG_TRACE("val_length: %d / size: %d / flags %x\n", val_length, size, flags);
   
-  if (val_length >= size - 1) {
+  if (flags & APE_TAG_TYPE_BINARY) {
+    // Binary data, just copy it as-is
+    
+    // Special handling if the tag is cover art, strip the filename from the front of
+    // the cover art data
+    if ( sv_len(key) == 17 && !memcmp( upcase(SvPVX(key)), "COVER ART (FRONT)", 17 ) ) {
+      if ( _env_true("AUDIO_SCAN_NO_ARTWORK") ) {
+        // Don't read artwork, just return the size
+        value = newSVuv(size - (val_length + 1) );
+        buffer_consume(&tag->tag_data, size);
+      }
+      else {
+        buffer_consume(&tag->tag_data, val_length + 1); // consume filename + null
+        size -= val_length + 1;
+      }
+    }
+    
+    if ( value == NULL ) {
+      value = newSVpvn( buffer_ptr(&tag->tag_data), size );
+      buffer_consume(&tag->tag_data, size);
+    }
+  }
+  else if (val_length >= size - 1) {
     // Single item
-    value = newSVpvn( buffer_ptr(&tag->tag_data), size );
+    value = newSVpvn( buffer_ptr(&tag->tag_data), val_length < size ? val_length : size );
     
     buffer_consume(&tag->tag_data, size);
     
@@ -412,7 +435,7 @@ get_ape_metadata(PerlIO *infile, char *file, HV *info, HV *tags)
   tag->info       = info;
   tag->tags       = tags;
   tag->filename   = file;
-  tag->flags      = 0 | APE_DEFAULT_FLAGS;
+  tag->flags      = 0;
   tag->size       = 0;
   tag->item_count = 0;
   tag->num_fields = 0;

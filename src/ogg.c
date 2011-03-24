@@ -16,8 +16,14 @@
 
 #include "ogg.h"
 
-static int
+int
 get_ogg_metadata(PerlIO *infile, char *file, HV *info, HV *tags)
+{
+  return _ogg_parse(infile, file, info, tags, 0);
+}
+
+int
+_ogg_parse(PerlIO *infile, char *file, HV *info, HV *tags, uint8_t seeking)
 {
   Buffer ogg_buf, vorbis_buf;
   unsigned char *bptr;
@@ -26,13 +32,15 @@ get_ogg_metadata(PerlIO *infile, char *file, HV *info, HV *tags)
   unsigned int id3_size = 0; // size of leading ID3 data
 
   off_t file_size;           // total file size
+  off_t audio_size;          // total size of audio without tags
   off_t audio_offset = 0;    // offset to audio
   
   unsigned char ogghdr[28];
   char header_type;
   int serialno;
+  int final_serialno;
   int pagenum;
-  char num_segments;
+  uint8_t num_segments;
   int pagelen;
   int page = 0;
   int packets = 0;
@@ -54,9 +62,8 @@ get_ogg_metadata(PerlIO *infile, char *file, HV *info, HV *tags)
   buffer_init(&ogg_buf, OGG_BLOCK_SIZE);
   buffer_init(&vorbis_buf, 0);
   
-  PerlIO_seek(infile, 0, SEEK_END);
-  file_size = PerlIO_tell(infile);
-  PerlIO_seek(infile, 0, SEEK_SET);
+  file_size = _file_size(infile);
+  my_hv_store( info, "file_size", newSVuv(file_size) );
   
   if ( !_check_buf(infile, &ogg_buf, 10, OGG_BLOCK_SIZE) ) {
     err = -1;
@@ -139,16 +146,21 @@ get_ogg_metadata(PerlIO *infile, char *file, HV *info, HV *tags)
     }
     else {
       page = -1;
-      PerlIO_printf(PerlIO_stderr(), "Missing page(s) in Ogg file: %s\n", file);
+      DEBUG_TRACE("Missing page(s) in Ogg file: %s\n", file);
     }
     
-    DEBUG_TRACE("OggS page %d / packet %d at %d\n", pagenum, packets, audio_offset - 28);
-    DEBUG_TRACE("  granule_pos: %lu\n", granule_pos);
+    DEBUG_TRACE("OggS page %d / packet %d at %d\n", pagenum, packets, (int)(audio_offset - 28));
+    DEBUG_TRACE("  granule_pos: %llu\n", granule_pos);
     
     // If the granule_pos > 0, we have reached the end of headers and
     // this is the first audio page
     if (granule_pos > 0 && granule_pos != -1) {
-      _parse_vorbis_comments(&vorbis_buf, tags, 1);
+      // If seeking, don't waste time on comments
+      if (seeking) {
+        break;
+      }
+      
+      _parse_vorbis_comments(infile, &vorbis_buf, tags, 1);
 
       DEBUG_TRACE("  parsed vorbis comments\n");
 
@@ -252,18 +264,25 @@ get_ogg_metadata(PerlIO *infile, char *file, HV *info, HV *tags)
   buffer_clear(&ogg_buf);
   
   // audio_offset is 28 less because we read the Ogg header
+  audio_offset -= 28;
+  
   // from the first packet past the comments
-  my_hv_store( info, "audio_offset", newSViv(audio_offset - 28) );
+  my_hv_store( info, "audio_offset", newSViv(audio_offset) );
+  
+  audio_size = file_size - audio_offset;
+  my_hv_store( info, "audio_size", newSVuv(audio_size) );
+  
+  my_hv_store( info, "serial_number", newSVuv(serialno) );
   
   // calculate average bitrate and duration
   avg_buf_size = blocksize_0 * 2;
   if ( file_size > avg_buf_size ) {
-    DEBUG_TRACE("Seeking to %d to calculate bitrate/duration\n", file_size - avg_buf_size);
+    DEBUG_TRACE("Seeking to %d to calculate bitrate/duration\n", (int)(file_size - avg_buf_size));
     PerlIO_seek(infile, file_size - avg_buf_size, SEEK_SET);
   }
   else {
-    DEBUG_TRACE("Seeking to %d to calculate bitrate/duration\n", audio_offset - 28);
-    PerlIO_seek(infile, audio_offset - 28, SEEK_SET);
+    DEBUG_TRACE("Seeking to %d to calculate bitrate/duration\n", (int)audio_offset);
+    PerlIO_seek(infile, audio_offset, SEEK_SET);
   }
 
   if ( PerlIO_read(infile, buffer_append_space(&ogg_buf, avg_buf_size), avg_buf_size) == 0 ) {
@@ -292,7 +311,7 @@ get_ogg_metadata(PerlIO *infile, char *file, HV *info, HV *tags)
       // Give up, use less accurate bitrate for length
       DEBUG_TRACE("buf_size %d, using less accurate bitrate for length\n", buf_size);
       
-      my_hv_store( info, "song_length_ms", newSVpvf( "%d", (int)((file_size * 8) / bitrate_nominal) * 1000) );
+      my_hv_store( info, "song_length_ms", newSVpvf( "%d", (int)((audio_size * 8) / bitrate_nominal) * 1000) );
       my_hv_store( info, "bitrate_average", newSViv(bitrate_nominal) );
 
       goto out;
@@ -304,23 +323,27 @@ get_ogg_metadata(PerlIO *infile, char *file, HV *info, HV *tags)
   granule_pos = (uint64_t)CONVERT_INT32LE(bptr);
   bptr += 4;
   granule_pos |= (uint64_t)CONVERT_INT32LE(bptr) << 32;
+  bptr += 4;
+  
+  // Get serial number of this page, if the serial doesn't match the beginning of the file
+  // we have changed logical bitstreams and can't use the granule_pos for bitrate
+  final_serialno = CONVERT_INT32LE((bptr));
 
-  if ( granule_pos && samplerate ) {
+  if ( granule_pos && samplerate && serialno == final_serialno ) {
+    // XXX: needs to adjust for initial granule value if file does not start at 0 samples
     int length = (int)((granule_pos * 1.0 / samplerate) * 1000);
     my_hv_store( info, "song_length_ms", newSVuv(length) );
-    my_hv_store( info, "bitrate_average", newSVpvf( "%.0f", ( file_size * 8 ) / ( length * 1.0 / 1000 ) ) );
+    my_hv_store( info, "bitrate_average", newSVuv( _bitrate(audio_size, length) ) );
     
-    DEBUG_TRACE("Using granule_pos/samplerate to calculate bitrate/duration\n");
+    DEBUG_TRACE("Using granule_pos %llu / samplerate %d to calculate bitrate/duration\n", granule_pos, samplerate);
   }
   else {
     // Use nominal bitrate
-    my_hv_store( info, "song_length_ms", newSVpvf( "%d", (int)((file_size * 8) / bitrate_nominal) * 1000) );
-    my_hv_store( info, "bitrate_average", newSViv(bitrate_nominal) );
+    my_hv_store( info, "song_length_ms", newSVpvf( "%d", (int)((audio_size * 8) / bitrate_nominal) * 1000) );
+    my_hv_store( info, "bitrate_average", newSVuv(bitrate_nominal) );
     
     DEBUG_TRACE("Using nominal bitrate for average\n");
   }
-  
-  my_hv_store( info, "file_size", newSVuv(file_size) );
   
 out:
   buffer_free(&ogg_buf);
@@ -332,11 +355,12 @@ out:
 }
 
 void
-_parse_vorbis_comments(Buffer *vorbis_buf, HV *tags, int has_framing)
+_parse_vorbis_comments(PerlIO *infile, Buffer *vorbis_buf, HV *tags, int has_framing)
 {
   unsigned int len;
   unsigned int num_comments;
   char *tmp;
+  char *bptr;
   SV *vendor;
   
   // Vendor string
@@ -352,13 +376,120 @@ _parse_vorbis_comments(Buffer *vorbis_buf, HV *tags, int has_framing)
   while (num_comments--) {
     len = buffer_get_int_le(vorbis_buf);
     
-    New(0, tmp, (int)len + 1, char);
-    buffer_get(vorbis_buf, tmp, len);
-    tmp[len] = '\0';
+    // Sanity check length
+    if ( len > buffer_len(vorbis_buf) ) {
+      DEBUG_TRACE("invalid Vorbis comment length: %u\n", len);
+      return;
+    }
     
-    _split_vorbis_comment( tmp, tags );
+    bptr = buffer_ptr(vorbis_buf);
     
-    Safefree(tmp);
+    if (
+#ifdef _MSC_VER
+      !strnicmp(bptr, "METADATA_BLOCK_PICTURE=", 23)
+#else
+      !strncasecmp(bptr, "METADATA_BLOCK_PICTURE=", 23)
+#endif
+    ) {
+      // parse METADATA_BLOCK_PICTURE according to http://wiki.xiph.org/VorbisComment#METADATA_BLOCK_PICTURE
+      AV *pictures;
+      HV *picture;
+      Buffer pic_buf; 
+      uint32_t pic_length;
+      
+      buffer_consume(vorbis_buf, 23);
+      
+      // Copy picture into new buffer and base64 decode it
+      buffer_init(&pic_buf, len - 23);
+      buffer_append( &pic_buf, buffer_ptr(vorbis_buf), len - 23 );
+      buffer_consume(vorbis_buf, len - 23);
+      
+      _decode_base64( buffer_ptr(&pic_buf) );
+      
+      picture = _decode_flac_picture(infile, &pic_buf, &pic_length);
+      if ( !picture ) {
+        PerlIO_printf(PerlIO_stderr(), "Invalid Vorbis METADATA_BLOCK_PICTURE comment\n");
+      }
+      else {
+        DEBUG_TRACE("  found picture of length %d\n", pic_length);
+        
+        if ( my_hv_exists(tags, "ALLPICTURES") ) {
+          SV **entry = my_hv_fetch(tags, "ALLPICTURES");
+          if (entry != NULL) {
+            pictures = (AV *)SvRV(*entry);
+            av_push( pictures, newRV_noinc( (SV *)picture ) );
+          }
+        }
+        else {
+          pictures = newAV();
+
+          av_push( pictures, newRV_noinc( (SV *)picture ) );
+
+          my_hv_store( tags, "ALLPICTURES", newRV_noinc( (SV *)pictures ) );
+        }
+      }
+      
+      buffer_free(&pic_buf);
+    }
+    else if (
+#ifdef _MSC_VER
+      !strnicmp(bptr, "COVERART=", 9)
+#else
+      !strncasecmp(bptr, "COVERART=", 9)
+#endif
+    ) {
+      // decode COVERART into ALLPICTURES
+      AV *pictures;
+      HV *picture = newHV();
+      
+      // Fill in recommended default values for most of the picture hash
+      my_hv_store( picture, "color_index", newSVuv(0) );
+      my_hv_store( picture, "depth", newSVuv(0) );
+      my_hv_store( picture, "description", newSVpvn("", 0) );
+      my_hv_store( picture, "height", newSVuv(0) );
+      my_hv_store( picture, "width", newSVuv(0) );
+      my_hv_store( picture, "mime_type", newSVpvn("image/", 6) ); // As recommended, real mime should be in COVERARTMIME
+      my_hv_store( picture, "picture_type", newSVuv(0) ); // Other
+      
+      if ( _env_true("AUDIO_SCAN_NO_ARTWORK") ) {
+        my_hv_store( picture, "image_data", newSVuv(len - 9) );
+        buffer_consume(vorbis_buf, len);
+      }
+      else {
+        int pic_length;
+
+        buffer_consume(vorbis_buf, 9);
+        pic_length = _decode_base64( buffer_ptr(vorbis_buf) );
+        DEBUG_TRACE("  found picture of length %d\n", pic_length);
+        
+        my_hv_store( picture, "image_data", newSVpvn( buffer_ptr(vorbis_buf), pic_length ) );
+        buffer_consume(vorbis_buf, len - 9);
+      }
+      
+      if ( my_hv_exists(tags, "ALLPICTURES") ) {
+        SV **entry = my_hv_fetch(tags, "ALLPICTURES");
+        if (entry != NULL) {
+          pictures = (AV *)SvRV(*entry);
+          av_push( pictures, newRV_noinc( (SV *)picture ) );
+        }
+      }
+      else {
+        pictures = newAV();
+
+        av_push( pictures, newRV_noinc( (SV *)picture ) );
+
+        my_hv_store( tags, "ALLPICTURES", newRV_noinc( (SV *)pictures ) );
+      }
+    }
+    else {
+      New(0, tmp, (int)len + 1, char);
+      buffer_get(vorbis_buf, tmp, len);
+      tmp[len] = '\0';
+    
+      _split_vorbis_comment( tmp, tags );
+    
+      Safefree(tmp);
+    }
   }
   
   if (has_framing) {
@@ -370,36 +501,190 @@ _parse_vorbis_comments(Buffer *vorbis_buf, HV *tags, int has_framing)
 static int
 ogg_find_frame(PerlIO *infile, char *file, int offset)
 {
-  Buffer ogg_buf;
-  unsigned char *bptr;
-  unsigned int buf_size;
   int frame_offset = -1;
+  uint32_t samplerate;
+  uint32_t song_length_ms;
+  uint64_t target_sample;
   
-  PerlIO_seek(infile, offset, SEEK_SET);
-  
-  buffer_init(&ogg_buf, OGG_BLOCK_SIZE);
-  
-  if ( !_check_buf(infile, &ogg_buf, 512, OGG_BLOCK_SIZE) ) {
+  // We need to read all metadata first to get some data we need to calculate
+  HV *info = newHV();
+  HV *tags = newHV();
+  if ( _ogg_parse(infile, file, info, tags, 1) != 0 ) {
     goto out;
   }
   
-  bptr = (unsigned char *)buffer_ptr(&ogg_buf);
-  buf_size = buffer_len(&ogg_buf);
-  
-  while (
-    buf_size >= 4
-    && (bptr[0] != 'O' || bptr[1] != 'g' || bptr[2] != 'g' || bptr[3] != 'S')
-  ) {
-    bptr++;
-    buf_size--;
+  song_length_ms = SvIV( *(my_hv_fetch( info, "song_length_ms" )) );
+  if (offset >= song_length_ms) {
+    goto out;
   }
   
-  if (buf_size >= 4) {
-    frame_offset = offset + OGG_BLOCK_SIZE - buf_size;
-  }
+  samplerate = SvIV( *(my_hv_fetch( info, "samplerate" )) );
+  
+  // Determine target sample we're looking for
+  target_sample = ((offset - 1) / 10) * (samplerate / 100);
+  DEBUG_TRACE("Looking for target sample %llu\n", target_sample);
+  
+  frame_offset = _ogg_binary_search_sample(infile, file, info, target_sample);
 
-out:
-  buffer_free(&ogg_buf);
+out:  
+  // Don't leak
+  SvREFCNT_dec(info);
+  SvREFCNT_dec(tags);
 
   return frame_offset;
 }
+
+int
+_ogg_binary_search_sample(PerlIO *infile, char *file, HV *info, uint64_t target_sample)
+{
+  Buffer buf;
+  unsigned char *bptr;
+  unsigned int buf_size;
+  int frame_offset = -1;
+  int prev_frame_offset = -1;
+  uint64_t granule_pos = 0;
+  uint64_t prev_granule_pos = 0;
+  uint32_t cur_serialno;
+  off_t low;
+  off_t high;
+  off_t mid;
+  int i;
+  
+  off_t audio_offset = SvIV( *(my_hv_fetch( info, "audio_offset" )) );
+  off_t file_size    = SvIV( *(my_hv_fetch( info, "file_size" )) );
+  uint32_t serialno  = SvIV( *(my_hv_fetch( info, "serial_number" )) );
+  
+  // Binary search the entire file
+  low  = audio_offset;
+  high = file_size;
+  
+  // We need enough for at least 2 packets
+  buffer_init(&buf, OGG_BLOCK_SIZE * 2);
+  
+  while (low <= high) {
+    off_t packet_offset;
+    
+    mid = low + ((high - low) / 2);
+    
+    DEBUG_TRACE("  Searching for sample %llu between %d and %d (mid %d)\n", target_sample, (int)low, (int)high, (int)mid);
+    
+    if (mid > file_size - 28) {
+      DEBUG_TRACE("  Reached end of file, aborting\n");
+      frame_offset = -1;
+      goto out;
+    }
+    
+    if ( (PerlIO_seek(infile, mid, SEEK_SET)) == -1 ) {
+      frame_offset = -1;
+      goto out;
+    }
+    
+    if ( !_check_buf(infile, &buf, 28, OGG_BLOCK_SIZE * 2) ) {
+      frame_offset = -1;
+      goto out;
+    }
+  
+    bptr = buffer_ptr(&buf);
+    buf_size = buffer_len(&buf);
+    
+    // Find all packets within this buffer, we need at least 2 packets
+    // to figure out what samples we have
+    while (buf_size >= 4) {
+      // Save info from previous packet
+      prev_frame_offset = frame_offset;
+      prev_granule_pos  = granule_pos;
+      
+      while (
+        buf_size >= 4
+        &&
+        (bptr[0] != 'O' || bptr[1] != 'g' || bptr[2] != 'g' || bptr[3] != 'S')
+      ) {
+        bptr++;
+        buf_size--;
+      }
+      
+      if (buf_size < 4) {
+        // No more packets found in buffer
+        break;
+      }
+      
+      // Remember how far into the buffer this packet is
+      packet_offset = buffer_len(&buf) - buf_size;
+    
+      frame_offset = mid + packet_offset;
+          
+      // Make sure we have at least the Ogg header
+      if ( !_check_buf(infile, &buf, 28, 28) ) {
+        frame_offset = -1;
+        goto out;
+      }
+
+      // Read granule_pos for this packet
+      bptr = buffer_ptr(&buf);
+      bptr += packet_offset + 6;
+      granule_pos = (uint64_t)CONVERT_INT32LE(bptr);
+      bptr += 4;
+      granule_pos |= (uint64_t)CONVERT_INT32LE(bptr) << 32;
+      bptr += 4;
+      buf_size -= 14;
+      
+      // Also read serial number, if this ever changes within a file it is a chained
+      // file and we can't seek
+      cur_serialno = CONVERT_INT32LE(bptr);
+      
+      if (serialno != cur_serialno) {
+        DEBUG_TRACE("  serial number changed to %x, aborting seek\n", cur_serialno);
+        frame_offset = -1;
+        goto out;
+      }
+    
+      DEBUG_TRACE("  frame offset: %d, prev_frame_offset: %d, granule_pos: %llu, prev_granule_pos %llu\n",
+        frame_offset, prev_frame_offset, granule_pos, prev_granule_pos
+      );
+      
+      // Break out after reading 2 packets
+      if (granule_pos && prev_granule_pos) {
+        break;
+      }
+    }
+    
+    // Now, we know the first (prev_granule_pos + 1) and last (granule_pos) samples
+    // in the packet starting at frame_offset
+    
+    if ((prev_granule_pos + 1) <= target_sample && granule_pos >= target_sample) {
+      // found frame
+      DEBUG_TRACE("  found frame at %d\n", frame_offset);
+      goto out;
+    }
+    
+    if (target_sample < (prev_granule_pos + 1)) {
+      // Special case when very first frame has the sample
+      if (prev_frame_offset == audio_offset) {
+        DEBUG_TRACE("  first frame has target sample\n");
+        frame_offset = prev_frame_offset;
+        break;
+      }
+      
+      high = mid - 1;
+      DEBUG_TRACE("  high = %d\n", (int)high);
+    }
+    else {
+      low = mid + 1;
+      DEBUG_TRACE("  low = %d\n", (int)low);
+    }
+    
+    // XXX this can be pretty inefficient in some cases
+    
+    // Reset and binary search again
+    buffer_clear(&buf);
+    
+    frame_offset = -1;
+    granule_pos = 0;
+  }
+
+out:
+  buffer_free(&buf);
+  
+  return frame_offset;
+}
+

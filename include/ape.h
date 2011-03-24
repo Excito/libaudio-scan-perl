@@ -29,7 +29,6 @@ Refactored by Dan Sully
 #ifndef _APETAG_H_
 #define _APETAG_H_
 
-#define APE_DEFAULT_FLAGS      0
 #define APE_CHECKED_APE        1 << 0
 #define APE_CHECKED_OFFSET     1 << 1
 #define APE_CHECKED_FIELDS     1 << 2
@@ -38,7 +37,7 @@ Refactored by Dan Sully
 #define APE_NO_ID3             1 << 5
 
 /* Artificial limits -- recommended but can be increased */
-#define APE_MAXIMUM_TAG_SIZE   8192
+#define APE_MAXIMUM_TAG_SIZE   100 * 1024 // recommended limit is 8KB but have seen files that are larger (Bug 15324)
 #define APE_MAXIMUM_ITEM_COUNT 64
 #define APE_ID3_MIN_TAG_SIZE   128
 
@@ -57,14 +56,15 @@ Refactored by Dan Sully
 #define APE_ITEM_RESERVED      6
 
 #define APE_PREAMBLE "APETAGEX"
-#define APE_HEADER_FLAGS "\0\0\240"
-#define APE_FOOTER_FLAGS "\0\0\200"
 
 #define ID3_LENGTH(TAG) (uint32_t)(((TAG->flags & APE_HAS_ID3) && !(TAG->flags & APE_NO_ID3)) ? APE_ID3_MIN_TAG_SIZE : 0)
 #define TAG_LENGTH(TAG) (tag->size + ID3_LENGTH(TAG))
 
 #define APE_TAG_HEADER_LEN     32
 #define APE_TAG_FOOTER_LEN     32
+
+#define APE_TAG_CONTAINS_HEADER 0x80000000
+#define APE_TAG_TYPE_BINARY     0x00000002
 
 typedef struct {
     PerlIO* fd;           /* PerlIO handle */
@@ -75,7 +75,8 @@ typedef struct {
     Buffer tag_data;      /* Tag body data */
     Buffer tag_footer;    /* Tag footer data */
     uint32_t version;     /* 1000 or 2000 */
-    uint32_t flags;       /* Internal tag flags */
+    uint32_t flags;       /* parsing status flags */
+    uint32_t footer_flags;
     uint32_t size;        /* On disk size in bytes */
     uint32_t item_count;
     uint32_t num_fields;

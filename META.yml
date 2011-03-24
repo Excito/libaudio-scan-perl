@@ -1,7 +1,7 @@
 --- #YAML:1.0
 name:               Audio-Scan
-version:            0.45
-abstract:           XS parser for MP3, MP4, Ogg Vorbis, FLAC, ASF, WAV, AIFF, Musepack, Monkey's Audio
+version:            0.75
+abstract:           Fast C metadata and tag reader for all common audio file formats
 author:
     - Andy Grundman <andy@slimdevices.com>
 license:            unknown

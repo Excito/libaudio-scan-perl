@@ -16,10 +16,6 @@
 
 #include "flac.h"
 
-/* frame header size (16 bytes) + 4608 stereo 16-bit samples (higher than 4608 is possible, but not done) */
-#define FLAC_FRAME_MAX_BLOCK 18448
-#define FLAC_HEADER_LEN 16
-
 int
 get_flac_metadata(PerlIO *infile, char *file, HV *info, HV *tags)
 {
@@ -53,9 +49,7 @@ _flac_parse(PerlIO *infile, char *file, HV *info, HV *tags, uint8_t seeking)
   
   buffer_init(flac->buf, FLAC_BLOCK_SIZE);
   
-  PerlIO_seek(infile, 0, SEEK_END);
-  flac->file_size = PerlIO_tell(infile);
-  PerlIO_seek(infile, 0, SEEK_SET);
+  flac->file_size = _file_size(infile);
   
   if ( !_check_buf(infile, flac->buf, 10, FLAC_BLOCK_SIZE) ) {
     err = -1;
@@ -78,8 +72,6 @@ _flac_parse(PerlIO *infile, char *file, HV *info, HV *tags, uint8_t seeking)
     }
     
     DEBUG_TRACE("Found ID3v2 tag of size %d\n", id3_size);
-    
-    my_hv_store( info, "id3_version", newSVpvf( "ID3v2.%d.%d", bptr[3], bptr[4] ) );
     
     flac->audio_offset += id3_size;
             
@@ -143,9 +135,13 @@ _flac_parse(PerlIO *infile, char *file, HV *info, HV *tags, uint8_t seeking)
       goto out;
     }
     
-    if ( !_check_buf(infile, flac->buf, len, len) ) {
-      err = -1;
-      goto out;
+    // Don't read in the full picture in case we aren't reading artwork
+    // Do the same for padding, as it can be quite large in some files
+    if ( type != FLAC_TYPE_PICTURE && type != FLAC_TYPE_PADDING ) {
+      if ( !_check_buf(infile, flac->buf, len, len) ) {
+        err = -1;
+        goto out;
+      }
     }
     
     flac->audio_offset += 4 + len;
@@ -158,7 +154,7 @@ _flac_parse(PerlIO *infile, char *file, HV *info, HV *tags, uint8_t seeking)
       case FLAC_TYPE_VORBIS_COMMENT:
         if ( !flac->seeking ) {
           // Vorbis comment parsing code from ogg.c
-          _parse_vorbis_comments(flac->buf, tags, 0);
+          _parse_vorbis_comments(flac->infile, flac->buf, tags, 0);
         }
         else {
           DEBUG_TRACE("  seeking, not parsing comments\n");
@@ -204,21 +200,51 @@ _flac_parse(PerlIO *infile, char *file, HV *info, HV *tags, uint8_t seeking)
         }
         else {
           DEBUG_TRACE("  seeking, skipping picture\n");
-          buffer_consume(flac->buf, len);
+          _flac_skip(flac, len);
         }
         break;
       
       case FLAC_TYPE_PADDING:
       default:
         DEBUG_TRACE("  unhandled or padding, skipping\n");
-        buffer_consume(flac->buf, len);
+        _flac_skip(flac, len);
     } 
   }
   
   song_length_ms = SvIV( *( my_hv_fetch(info, "song_length_ms") ) );
   
   if (song_length_ms > 0) {
-    my_hv_store( info, "bitrate", newSVuv(8 * (flac->file_size - flac->audio_offset) / (1. * song_length_ms / 1000) ));
+    my_hv_store( info, "bitrate", newSVuv( _bitrate(flac->file_size - flac->audio_offset, song_length_ms) ) );
+  }
+  else {
+    if (!seeking) {
+      // Find the first/last frames and manually calculate duration and bitrate
+      off_t frame_offset;
+      uint64_t first_sample;
+      uint64_t last_sample;
+      uint64_t tmp;
+    
+      DEBUG_TRACE("Manually determining duration/bitrate\n");
+    
+      if ( _flac_first_last_sample(flac, flac->audio_offset, &frame_offset, &first_sample, &tmp) ) {
+        DEBUG_TRACE("  First sample: %llu (offset %llu)\n", first_sample, frame_offset);
+        
+        // XXX This last sample isn't really correct, seeking back max_framesize will most likely be several frames
+        // from the end, resulting in a slightly shortened duration. Reading backwards through the file
+        // would provide a more accurate result
+        if ( _flac_first_last_sample(flac, flac->file_size - flac->max_framesize, &frame_offset, &tmp, &last_sample) ) {
+          SV **samplerate = my_hv_fetch( info, "samplerate" );
+          if (samplerate != NULL) {
+            song_length_ms = ( ((last_sample - first_sample) * 1.0) / SvIV(*samplerate)) * 1000;
+            my_hv_store( info, "song_length_ms", newSVuv(song_length_ms) );
+            my_hv_store( info, "bitrate", newSVuv( _bitrate(flac->file_size - flac->audio_offset, song_length_ms) ) );
+            my_hv_store( info, "total_samples", newSVuv( last_sample - first_sample ) );
+          }
+          
+          DEBUG_TRACE("  Last sample: %llu (offset %llu)\n", last_sample, frame_offset);
+        }
+      }
+    }
   }
   
   my_hv_store( info, "file_size", newSVuv(flac->file_size) );
@@ -226,7 +252,7 @@ _flac_parse(PerlIO *infile, char *file, HV *info, HV *tags, uint8_t seeking)
   
   // Parse ID3 last, due to an issue with libid3tag screwing
   // up the filehandle
-  if (id3_size) {
+  if (id3_size && !seeking) {
     parse_id3(infile, file, info, tags, 0);
   }
 
@@ -250,11 +276,16 @@ flac_find_frame(PerlIO *infile, char *file, int offset)
   HV *tags = newHV();
   flacinfo *flac = _flac_parse(infile, file, info, tags, 1);
   
+  if ( !my_hv_exists(info, "samplerate") ) {
+    // Can't seek in file without samplerate
+    goto out;
+  }
+  
   samplerate   = SvIV( *(my_hv_fetch( info, "samplerate" )) );
   
   // Determine target sample we're looking for
   target_sample = ((offset - 1) / 10) * (samplerate / 100);
-  DEBUG_TRACE("Looking for target sample %d\n", target_sample);
+  DEBUG_TRACE("Looking for target sample %llu\n", target_sample);
   
   if (flac->num_seekpoints) {
     // Use seektable to find seek point
@@ -305,6 +336,7 @@ flac_find_frame(PerlIO *infile, char *file, int offset)
     frame_offset = _flac_binary_search_sample(flac, target_sample, flac->audio_offset, flac->file_size);
   }
   
+out:
   // Don't leak
   SvREFCNT_dec(info);
   SvREFCNT_dec(tags);
@@ -321,68 +353,88 @@ int
 _flac_binary_search_sample(flacinfo *flac, uint64_t target_sample, off_t low, off_t high)
 {
   off_t mid;
-  Buffer buf;
-  unsigned char *bptr;
-  unsigned int buf_size;
-  int frame_offset = -1;
+  off_t frame_offset = -1;
   uint64_t first_sample;
   uint64_t last_sample;
-  int i;
-  
-  buffer_init(&buf, FLAC_FRAME_MAX_BLOCK);
   
   while (low <= high) {
     mid = low + ((high - low) / 2);
   
-    DEBUG_TRACE("  Searching for sample %d between %d and %d (mid %d)\n", target_sample, low, high, mid);
-  
-    PerlIO_seek(flac->infile, mid, SEEK_SET);
-      
-    if ( !_check_buf(flac->infile, &buf, FLAC_FRAME_MAX_HEADER, FLAC_FRAME_MAX_BLOCK) ) {
+    DEBUG_TRACE("  Searching for sample %llu between %d and %d (mid %d)\n", target_sample, (int)low, (int)high, (int)mid);
+    
+    if ( !_flac_first_last_sample(flac, mid, &frame_offset, &first_sample, &last_sample) ) {
       goto out;
     }
-  
-    bptr = buffer_ptr(&buf);
-    buf_size = buffer_len(&buf);
-  
-    for (i = 0; i != buf_size - FLAC_HEADER_LEN; i++) {
-      if (bptr[i] != 0xFF)
-        continue;
-      
-      // Verify we have a valid FLAC frame header
-      // and get the first/last sample numbers in the frame if it's valid
-      if ( !_flac_first_sample( &bptr[i], &first_sample, &last_sample ) )
-        continue;
-      
-      frame_offset = mid + i;
-      
-      break;
-    }
     
-    DEBUG_TRACE("  first_sample %ld, last_sample %ld\n", first_sample, last_sample);
+    DEBUG_TRACE("  frame offset: %llu, first_sample %llu, last_sample %llu\n", frame_offset, first_sample, last_sample);
     
     if (first_sample <= target_sample && last_sample >= target_sample) {
       // found frame
-      DEBUG_TRACE("  found frame at %d\n", frame_offset);
+      DEBUG_TRACE("  found frame at %llu\n", frame_offset);
       goto out;
     }
   
     if (target_sample < first_sample) {
       high = mid - 1;
-      DEBUG_TRACE("  high = %d\n", high);
+      DEBUG_TRACE("  high = %d\n", (int)high);
     }
     else {
       low = mid + 1;
-      DEBUG_TRACE("  low = %d\n", low);
+      DEBUG_TRACE("  low = %d\n", (int)low);
     }
+  }
+  
+out:
+  return frame_offset;
+}
+
+int
+_flac_first_last_sample(flacinfo *flac, off_t seek_offset, off_t *frame_offset, uint64_t *first_sample, uint64_t *last_sample)
+{
+  Buffer buf;
+  unsigned char *bptr;
+  unsigned int buf_size;
+  int ret = 1;
+  int i;
+  
+  buffer_init(&buf, flac->max_framesize);
+  
+  if (seek_offset > flac->file_size - FLAC_FRAME_MAX_HEADER) {
+    ret = 0;
+    goto out;
+  }
+  
+  if ( (PerlIO_seek(flac->infile, seek_offset, SEEK_SET)) == -1 ) {
+    ret = 0;
+    goto out;
+  }
     
-    buffer_clear(&buf);
+  if ( !_check_buf(flac->infile, &buf, FLAC_FRAME_MAX_HEADER, flac->max_framesize) ) {
+    ret = 0;
+    goto out;
+  }
+
+  bptr = buffer_ptr(&buf);
+  buf_size = buffer_len(&buf);
+
+  for (i = 0; i != buf_size - FLAC_HEADER_LEN; i++) {
+    if (bptr[i] != 0xFF)
+      continue;
+    
+    // Verify we have a valid FLAC frame header
+    // and get the first/last sample numbers in the frame if it's valid
+    if ( !_flac_first_sample( &bptr[i], first_sample, last_sample ) )
+      continue;
+    
+    *frame_offset = seek_offset + i;
+    
+    break;
   }
   
 out:
   buffer_free(&buf);
-
-  return frame_offset;
+  
+  return ret;
 }
 
 int
@@ -448,7 +500,7 @@ _flac_first_sample(unsigned char *buf, uint64_t *first_sample, uint64_t *last_sa
     if ( xx == 0xFFFFFFFFFFFFFFFFLL )
       return 0;
       
-    //DEBUG_TRACE("  variable blocksize, first sample %ld\n", xx);
+    //DEBUG_TRACE("  variable blocksize, first sample %llu\n", xx);
     
     *first_sample = xx;
   }
@@ -496,6 +548,9 @@ _flac_first_sample(unsigned char *buf, uint64_t *first_sample, uint64_t *last_sa
   if (frame_number) {
     *first_sample = frame_number * blocksize;
   }
+  else {
+    *first_sample = 0;
+  }
   
   *last_sample = *first_sample + blocksize;
   
@@ -517,7 +572,13 @@ _flac_parse_streaminfo(flacinfo *flac)
   my_hv_store( flac->info, "maximum_blocksize", newSVuv( buffer_get_short(flac->buf) ) );
   
   my_hv_store( flac->info, "minimum_framesize", newSVuv( buffer_get_int24(flac->buf) ) );
-  my_hv_store( flac->info, "maximum_framesize", newSVuv( buffer_get_int24(flac->buf) ) );
+  
+  flac->max_framesize = buffer_get_int24(flac->buf);
+  my_hv_store( flac->info, "maximum_framesize", newSVuv(flac->max_framesize) );
+  
+  if ( !flac->max_framesize ) {
+    flac->max_framesize = FLAC_MAX_FRAMESIZE;
+  }
   
   tmp = buffer_get_int64(flac->buf);
   
@@ -590,7 +651,7 @@ _flac_parse_seektable(flacinfo *flac, int len)
     flac->seekpoints[i].frame_samples = buffer_get_short(flac->buf);
     
     DEBUG_TRACE(
-      "  sample_number %ld stream_offset %ld frame_samples %d\n",
+      "  sample_number %llu stream_offset %llu frame_samples %d\n",
       flac->seekpoints[i].sample_number,
       flac->seekpoints[i].stream_offset,
       flac->seekpoints[i].frame_samples
@@ -645,7 +706,7 @@ _flac_parse_cuesheet(flacinfo *flac)
     
     num_index = (uint8_t)buffer_get_char(flac->buf);
     
-    DEBUG_TRACE("    track %d: offset %ld, type %d, pre %d, num_index %d\n", tracknum, track_offset, type, pre, num_index);
+    DEBUG_TRACE("    track %d: offset %llu, type %d, pre %d, num_index %d\n", tracknum, track_offset, type, pre, num_index);
     
     if (tracknum > 0 && tracknum < 100) {
       av_push( cue, newSVpvf("  TRACK %02u %s\n",
@@ -668,7 +729,7 @@ _flac_parse_cuesheet(flacinfo *flac)
       uint8_t index_num = (uint8_t)buffer_get_char(flac->buf);
       buffer_consume(flac->buf, 3);
       
-      DEBUG_TRACE("      index %d, offset %ld\n", index_num, index_offset);
+      DEBUG_TRACE("      index %d, offset %llu\n", index_num, index_offset);
       
       index = newSVpvf("    INDEX %02u ", index_num);
       
@@ -712,59 +773,28 @@ int
 _flac_parse_picture(flacinfo *flac)
 {
   AV *pictures;
-  HV *picture = newHV();
+  HV *picture;
   int ret = 1;
-  uint32_t mime_length;
-  uint32_t desc_length;
   uint32_t pic_length;
-  SV *desc;
   
-  my_hv_store( picture, "picture_type", newSVuv( buffer_get_int(flac->buf) ) );
-  
-  mime_length = buffer_get_int(flac->buf);
-  DEBUG_TRACE("  mime_length: %d\n", mime_length);
-  if (mime_length > buffer_len(flac->buf)) {
+  picture = _decode_flac_picture(flac->infile, flac->buf, &pic_length);
+  if ( !picture ) {
     PerlIO_printf(PerlIO_stderr(), "Invalid FLAC file: %s, bad picture block\n", flac->file);
     ret = 0;
     goto out;
   }
   
-  my_hv_store( picture, "mime_type", newSVpvn( buffer_ptr(flac->buf), mime_length ) );
-  buffer_consume(flac->buf, mime_length);
-  
-  desc_length = buffer_get_int(flac->buf);
-  DEBUG_TRACE("  desc_length: %d\n", mime_length);
-  if (desc_length > buffer_len(flac->buf)) {
-    PerlIO_printf(PerlIO_stderr(), "Invalid FLAC file: %s, bad picture block\n", flac->file);
-    ret = 0;
-    goto out;
+  // Skip past pic data if necessary
+  if ( _env_true("AUDIO_SCAN_NO_ARTWORK") ) {
+    _flac_skip(flac, pic_length);
   }
-  
-  desc = newSVpvn( buffer_ptr(flac->buf), desc_length );
-  sv_utf8_decode(desc); // XXX needs test with utf8 desc
-  my_hv_store( picture, "description", desc );
-  buffer_consume(flac->buf, desc_length);
-  
-  my_hv_store( picture, "width", newSVuv( buffer_get_int(flac->buf) ) );
-  my_hv_store( picture, "height", newSVuv( buffer_get_int(flac->buf) ) );
-  my_hv_store( picture, "depth", newSVuv( buffer_get_int(flac->buf) ) );
-  my_hv_store( picture, "color_index", newSVuv( buffer_get_int(flac->buf) ) );
-  
-  pic_length = buffer_get_int(flac->buf);
-  DEBUG_TRACE("  pic_length: %d\n", pic_length);
-  if (pic_length > buffer_len(flac->buf)) {
-    PerlIO_printf(PerlIO_stderr(), "Invalid FLAC file: %s, bad picture block\n", flac->file);
-    ret = 0;
-    goto out;
+  else {
+    buffer_consume(flac->buf, pic_length);
   }
-  
-  my_hv_store( picture, "image_data", newSVpvn( buffer_ptr(flac->buf), pic_length ) );
-  buffer_consume(flac->buf, pic_length);
   
   DEBUG_TRACE("  found picture of length %d\n", pic_length);
   
   if ( my_hv_exists(flac->tags, "ALLPICTURES") ) {
-    // XXX needs test
     SV **entry = my_hv_fetch(flac->tags, "ALLPICTURES");
     if (entry != NULL) {
       pictures = (AV *)SvRV(*entry);
@@ -934,4 +964,20 @@ _flac_read_utf8_uint32(unsigned char *raw, uint32_t *val, uint8_t *rawlen)
   }
   *val = v;
   return 1;
+}
+
+void
+_flac_skip(flacinfo *flac, uint32_t size)
+{
+  if ( buffer_len(flac->buf) >= size ) {
+    buffer_consume(flac->buf, size);
+    
+    DEBUG_TRACE("  skipped buffer data size %d\n", size);
+  }
+  else {
+    PerlIO_seek(flac->infile, size - buffer_len(flac->buf), SEEK_CUR);
+    buffer_clear(flac->buf);
+    
+    DEBUG_TRACE("  seeked past %d bytes to %d\n", size, (int)PerlIO_tell(flac->infile));
+  }
 }
