@@ -40,7 +40,7 @@ _varint(unsigned char *buf, int length)
 }
 
 int
-parse_id3(PerlIO *infile, char *file, HV *info, HV *tags, uint32_t seek)
+parse_id3(PerlIO *infile, char *file, HV *info, HV *tags, uint32_t seek, off_t file_size)
 {
   int err = 0;
   unsigned char *bptr;
@@ -57,16 +57,18 @@ parse_id3(PerlIO *infile, char *file, HV *info, HV *tags, uint32_t seek)
   
   buffer_init(id3->buf, ID3_BLOCK_SIZE);
   
-  // Check for ID3v1 tag first
-  PerlIO_seek(infile, -128, SEEK_END);
-  if ( !_check_buf(infile, id3->buf, 128, 128) ) {
-    err = -1;
-    goto out;
-  }
+  if ( !seek ) {
+    // Check for ID3v1 tag first
+    PerlIO_seek(infile, file_size - 128, SEEK_SET);
+    if ( !_check_buf(infile, id3->buf, 128, 128) ) {
+      err = -1;
+      goto out;
+    }
   
-  bptr = buffer_ptr(id3->buf);
-  if (bptr[0] == 'T' && bptr[1] == 'A' && bptr[2] == 'G') {
-    _id3_parse_v1(id3);
+    bptr = buffer_ptr(id3->buf);
+    if (bptr[0] == 'T' && bptr[1] == 'A' && bptr[2] == 'G') {
+      _id3_parse_v1(id3);
+    }
   }
   
   // Check for ID3v2 tag
@@ -240,8 +242,18 @@ _id3_parse_v2(id3info *id3)
       // It's unclear but the v2.4.0-changes document seems to say that v2.4 should
       // ignore the tag-level unsync flag and only worry about frame-level unsync
     
-      // XXX need v2.2/v2.3 unsync test file
-      DEBUG_TRACE("  !!! TODO un-synchronize tag\n");
+      // For v2.2/v2.3, unsync the entire tag.  This is unfortunate due to
+      // increased memory usage but the only way to do it, as frame size values only
+      // indicate the post-unsync size, so it's not possible to unsync each frame individually
+      // tested with v2.3-unsync.mp3
+      if ( !_check_buf(id3->infile, id3->buf, id3->size, id3->size) ) {
+        ret = 0;
+        goto out;
+      }
+        
+      id3->size_remain = _id3_deunsync( buffer_ptr(id3->buf), id3->size );
+      
+      DEBUG_TRACE("    Un-synchronized tag, new_size %d\n", id3->size_remain);
     }
     else {
       DEBUG_TRACE("  Ignoring v2.4 tag un-synchronize flag\n");
@@ -455,7 +467,8 @@ _id3_parse_v2_frame(id3info *id3)
       }
       
       // Perform decompression if necessary after all optional extra bytes have been read
-      if (decoded_size) {
+      // XXX need test for compressed + unsync
+      if (flags & ID3_FRAME_FLAG_V23_COMPRESSION && decoded_size) {
         unsigned long tmp_size;
         
         if ( !_check_buf(id3->infile, id3->buf, size, ID3_BLOCK_SIZE) ) {
@@ -708,6 +721,10 @@ _id3_parse_v2_frame_data(id3info *id3, char const *id, uint32_t size, id3_framet
   uint8_t buffer_art = ( !strcmp(id, "APIC") ) ? 1 : 0;
   uint8_t skip_art   = ( buffer_art && _env_true("AUDIO_SCAN_NO_ARTWORK") ) ? 1 : 0;
   
+  // Bug 16703, a completely empty frame is against the rules, skip it
+  if (!size)
+    return 1;
+  
   if (skip_art) {
     // Only buffer enough for the APIC header fields, this is only a rough guess
     // because the description could technically be very long
@@ -793,70 +810,72 @@ _id3_parse_v2_frame_data(id3info *id3, char const *id, uint32_t size, id3_framet
       // v2.4 handles multiple genres using null char separators (or $00 $00 in UTF-16),
       // this is handled by _id3_get_utf8_string      
       read += _id3_get_utf8_string(id3, &value, size - read, encoding);
-      sptr = SvPVX(value);
+      if (value != NULL && SvPOK(value)) {
+        sptr = SvPVX(value);
       
-      // Test if the string contains only a number,
-      // strtol will set tmp to end in this case
-      end = sptr + sv_len(value);
-      strtol(sptr, &tmp, 0);
+        // Test if the string contains only a number,
+        // strtol will set tmp to end in this case
+        end = sptr + sv_len(value);
+        strtol(sptr, &tmp, 0);
       
-      if ( tmp == end ) {
-        // Convert raw number to genre string
-        av_push( genres, newSVpv( _id3_genre_name((char *)sptr), 0 ) );
+        if ( tmp == end ) {
+          // Convert raw number to genre string
+          av_push( genres, newSVpv( _id3_genre_name((char *)sptr), 0 ) );
         
-        // value as an SV won't be used, must drop refcnt
-        SvREFCNT_dec(value);
-      }
-      else if ( *sptr == '(' ) {
-        // Handle (26), (26)Ambient, etc, only the number portion will be read
+          // value as an SV won't be used, must drop refcnt
+          SvREFCNT_dec(value);
+        }
+        else if ( *sptr == '(' ) {
+          // Handle (26), (26)Ambient, etc, only the number portion will be read
         
-        if (id3->version_major < 4) {
-          // v2.2/v2.3 handle multiple genres using parens for some reason, i.e. (51)(39) or (55)(Text)
-          char *ptr = sptr;
-          char *end = sptr + sv_len(value);
+          if (id3->version_major < 4) {
+            // v2.2/v2.3 handle multiple genres using parens for some reason, i.e. (51)(39) or (55)(Text)
+            char *ptr = sptr;
+            char *end = sptr + sv_len(value);
           
-          while (end - ptr > 0) {
-            if ( *ptr++ == '(' ) {
-              char *paren = strchr(ptr, ')');
-              if (paren == NULL)
-                paren = end;
+            while (end - ptr > 0) {
+              if ( *ptr++ == '(' ) {
+                char *paren = strchr(ptr, ')');
+                if (paren == NULL)
+                  paren = end;
               
-              if ( isdigit(*ptr) || !strncmp((char *)ptr, "RX", 2) || !strncmp((char *)ptr, "CR", 2) ) {
-                av_push( genres, newSVpv( _id3_genre_name((char *)ptr), 0 ) );
+                if ( isdigit(*ptr) || !strncmp((char *)ptr, "RX", 2) || !strncmp((char *)ptr, "CR", 2) ) {
+                  av_push( genres, newSVpv( _id3_genre_name((char *)ptr), 0 ) );
+                }
+                else {
+                  // Handle text within parens
+                  av_push( genres, newSVpvn(ptr,  paren - ptr) );
+                }
+                ptr = paren;
               }
-              else {
-                // Handle text within parens
-                av_push( genres, newSVpvn(ptr,  paren - ptr) );
-              }
-              ptr = paren;
             }
           }
-        }
-        else {
-          // v2.4, the (51) method is no longer valid but we will support it anyway
-          sptr++;
-          if ( isdigit(*sptr) || !strncmp(sptr, "RX", 2) || !strncmp(sptr, "CR", 2) ) {
-            av_push( genres, newSVpv( _id3_genre_name((char *)sptr), 0 ) );
-          }
           else {
-            av_push( genres, newSVpv( (char *)sptr, 0 ) );
+            // v2.4, the (51) method is no longer valid but we will support it anyway
+            sptr++;
+            if ( isdigit(*sptr) || !strncmp(sptr, "RX", 2) || !strncmp(sptr, "CR", 2) ) {
+              av_push( genres, newSVpv( _id3_genre_name((char *)sptr), 0 ) );
+            }
+            else {
+              av_push( genres, newSVpv( (char *)sptr, 0 ) );
+            }
           }
-        }
         
-        // value as an SV won't be used, must drop refcnt
-        SvREFCNT_dec(value);
-      }
-      else {
-        // Support raw RX/CR value
-        if ( !strncmp(sptr, "RX", 2) || !strncmp(sptr, "CR", 2) ) {
-          av_push( genres, newSVpv( _id3_genre_name((char *)sptr), 0 ) );
-          
           // value as an SV won't be used, must drop refcnt
           SvREFCNT_dec(value);
         }
         else {
-          // Store plain text genre
-          av_push( genres, value );
+          // Support raw RX/CR value
+          if ( !strncmp(sptr, "RX", 2) || !strncmp(sptr, "CR", 2) ) {
+            av_push( genres, newSVpv( _id3_genre_name((char *)sptr), 0 ) );
+          
+            // value as an SV won't be used, must drop refcnt
+            SvREFCNT_dec(value);
+          }
+          else {
+            // Store plain text genre
+            av_push( genres, value );
+          }
         }
       }
     }
@@ -888,7 +907,8 @@ _id3_parse_v2_frame_data(id3info *id3, char const *id, uint32_t size, id3_framet
     switch ( frametype->fields[i] ) {
       case ID3_FIELD_TYPE_LATIN1: // W* frames
         read += _id3_get_utf8_string(id3, &value, size - read, ISO_8859_1);
-        my_hv_store( id3->tags, id, value );
+        if (value != NULL && SvPOK(value))
+          my_hv_store( id3->tags, id, value );
         break;
       
       case ID3_FIELD_TYPE_STRINGLIST: // T* frames
@@ -904,7 +924,7 @@ _id3_parse_v2_frame_data(id3info *id3, char const *id, uint32_t size, id3_framet
             
           read += _id3_get_utf8_string(id3, &value, size - read, encoding);
           
-          if (array != NULL) {
+          if (array != NULL && value != NULL && SvPOK(value)) {
             // second+ string, add to array
             av_push(array, value);
           }
@@ -989,7 +1009,8 @@ _id3_parse_v2_frame_data(id3info *id3, char const *id, uint32_t size, id3_framet
           }
           else {
             read += _id3_get_utf8_string(id3, &value, size - read, ISO_8859_1);
-            av_push( framedata, value );
+            if (value != NULL && SvPOK(value))
+              av_push( framedata, value );
           }
           break;
         
@@ -998,7 +1019,8 @@ _id3_parse_v2_frame_data(id3info *id3, char const *id, uint32_t size, id3_framet
         case ID3_FIELD_TYPE_LATIN1LIST: // LINK
           while (read < size) {
             read += _id3_get_utf8_string(id3, &value, size - read, ISO_8859_1);
-            av_push( framedata, value );
+            if (value != NULL && SvPOK(value))
+              av_push( framedata, value );
             value = NULL;
             DEBUG_TRACE("    latin1list, read %d\n", read);
           }
@@ -1021,8 +1043,10 @@ _id3_parse_v2_frame_data(id3info *id3, char const *id, uint32_t size, id3_framet
           SV *tmp = newSVpvn( "", 0 );
           while (read < size) {
             read += _id3_get_utf8_string(id3, &value, size - read, encoding);
-            sv_catsv( tmp, value );
-            SvREFCNT_dec(value);
+            if (value != NULL && SvPOK(value)) {
+              sv_catsv( tmp, value );
+              SvREFCNT_dec(value);
+            }
             value = NULL;
           }
           av_push( framedata, tmp );
@@ -1033,60 +1057,76 @@ _id3_parse_v2_frame_data(id3info *id3, char const *id, uint32_t size, id3_framet
         // ID3_FIELD_TYPE_STRINGLIST - only used for text frames, handled above
         
         case ID3_FIELD_TYPE_LANGUAGE: // USLT, SYLT, COMM, USER, 3-byte language code
-          av_push( framedata, newSVpvn( buffer_ptr(id3->buf), 3 ) );
-          buffer_consume(id3->buf, 3);
-          read += 3;
-          DEBUG_TRACE("    language, read %d\n", read);
+          if (size - read >= 3) {
+            av_push( framedata, newSVpvn( buffer_ptr(id3->buf), 3 ) );
+            buffer_consume(id3->buf, 3);
+            read += 3;
+            DEBUG_TRACE("    language, read %d\n", read);
+          }
           break;
         
         case ID3_FIELD_TYPE_FRAMEID: // LINK, 3-byte frame id (v2.3, must be a bug in the spec?),
                                      // 4-byte frame id (v2.4) XXX need test
         {
           uint8_t len = (id3->version_major == 3) ? 3 : 4;
-          av_push( framedata, newSVpvn( buffer_ptr(id3->buf), len ) );
-          buffer_consume(id3->buf, len);
-          read += len;
-          DEBUG_TRACE("    frameid, read %d\n", read);
+          if (size - read >= len) {
+            av_push( framedata, newSVpvn( buffer_ptr(id3->buf), len ) );
+            buffer_consume(id3->buf, len);
+            read += len;
+            DEBUG_TRACE("    frameid, read %d\n", read);
+          }
           break;
         }
         
         case ID3_FIELD_TYPE_DATE: // OWNE, COMR, XXX need test, YYYYMMDD
-          av_push( framedata, newSVpvn( buffer_ptr(id3->buf), 8 ) );
-          buffer_consume(id3->buf, 8);
-          read += 8;
-          DEBUG_TRACE("    date, read %d\n", read);
+          if (size - read >= 8) {
+            av_push( framedata, newSVpvn( buffer_ptr(id3->buf), 8 ) );
+            buffer_consume(id3->buf, 8);
+            read += 8;
+            DEBUG_TRACE("    date, read %d\n", read);
+          }
           break;
         
         case ID3_FIELD_TYPE_INT8: // ETCO, MLLT, SYTC, SYLT, EQU2, RVRB, APIC,
                                   // POPM, RBUF, POSS, COMR, ENCR, GRID, SIGN, ASPI
-          av_push( framedata, newSViv( buffer_get_char(id3->buf) ) );
-          read += 1;
-          DEBUG_TRACE("    int8, read %d\n", read);
+          if (size - read >= 1) {
+            av_push( framedata, newSViv( buffer_get_char(id3->buf) ) );
+            read += 1;
+            DEBUG_TRACE("    int8, read %d\n", read);
+          }
           break;
         
         case ID3_FIELD_TYPE_INT16: // MLLT, RVRB, AENC, ASPI
-          av_push( framedata, newSViv( buffer_get_short(id3->buf) ) );
-          read += 2;
-          DEBUG_TRACE("    int16, read %d\n", read);
+          if (size - read >= 2) {
+            av_push( framedata, newSViv( buffer_get_short(id3->buf) ) );
+            read += 2;
+            DEBUG_TRACE("    int16, read %d\n", read);
+          }
           break;
         
         case ID3_FIELD_TYPE_INT24: // MLLT, RBUF
-          av_push( framedata, newSViv( buffer_get_int24(id3->buf) ) );
-          read += 3;
-          DEBUG_TRACE("    int24, read %d\n", read);
+          if (size - read >= 3) {
+            av_push( framedata, newSViv( buffer_get_int24(id3->buf) ) );
+            read += 3;
+            DEBUG_TRACE("    int24, read %d\n", read);
+          }
           break;
         
         case ID3_FIELD_TYPE_INT32: // RBUF, SEEK, ASPI
-          av_push( framedata, newSViv( buffer_get_int(id3->buf) ) );
-          read += 4;
-          DEBUG_TRACE("    int32, read %d\n", read);
+          if (size - read >= 4) {
+            av_push( framedata, newSViv( buffer_get_int(id3->buf) ) );
+            read += 4;
+            DEBUG_TRACE("    int32, read %d\n", read);
+          }
           break;
         
         case ID3_FIELD_TYPE_INT32PLUS: // POPM
-          av_push( framedata, newSViv( _varint( buffer_ptr(id3->buf), size - read ) ) );
-          buffer_consume(id3->buf, size - read);
-          read = size;
-          DEBUG_TRACE("    int32plus, read %d\n", read);
+          if (size - read >= 4) {
+            av_push( framedata, newSViv( _varint( buffer_ptr(id3->buf), size - read ) ) );
+            buffer_consume(id3->buf, size - read);
+            read = size;
+            DEBUG_TRACE("    int32plus, read %d\n", read);
+          }
           break;
         
         case ID3_FIELD_TYPE_BINARYDATA: // ETCO, MLLT, SYTC, SYLT, RVA2, EQU2, APIC,
@@ -1140,10 +1180,12 @@ _id3_parse_v2_frame_data(id3info *id3, char const *id, uint32_t size, id3_framet
           
           // All other binary frames, copy as-is          
           else {
-            av_push( framedata, newSVpvn( buffer_ptr(id3->buf), size - read ) );
-            buffer_consume(id3->buf, size - read);
-            read = size;
-            DEBUG_TRACE("    binarydata, read %d\n", read);
+            if (size - read > 1) {
+              av_push( framedata, newSVpvn( buffer_ptr(id3->buf), size - read ) );
+              buffer_consume(id3->buf, size - read);
+              read = size;
+              DEBUG_TRACE("    binarydata, read %d\n", read);
+            }
           }
           break;
         
@@ -1260,7 +1302,6 @@ _id3_get_utf8_string(id3info *id3, SV **string, uint32_t len, uint8_t encoding)
   switch (encoding) {
     case ISO_8859_1:
       read += buffer_get_latin1_as_utf8(id3->buf, id3->utf8, len);
-      DEBUG_TRACE("    read latin1 string of %d bytes: %s\n", read, (char *)buffer_ptr(id3->utf8));
       break;
     
     case UTF_16BE:
@@ -1477,7 +1518,7 @@ _id3_parse_sylt(id3info *id3, uint8_t encoding, uint32_t len, AV *framedata)
     HV *lyric = newHV();
     
     read += _id3_get_utf8_string(id3, &value, len - read, encoding);
-    if (SvPOK(value) && sv_len(value)) {
+    if (value != NULL && SvPOK(value) && sv_len(value)) {
       my_hv_store( lyric, "text", value );
     }
     else {

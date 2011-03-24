@@ -22,6 +22,10 @@
 #define	roundup(x, y)	((((x)+((y)-1))/(y))*(y))  /* to any y */
 #endif
 
+#ifndef MAX
+#define MAX(X,Y) ((X) > (Y) ? (X) : (Y))
+#endif
+
 #ifndef MIN
 #define MIN(X,Y) ((X) < (Y) ? (X) : (Y))
 #endif
@@ -50,6 +54,7 @@ const uint32_t CacheMask[33] = {
 };
 
 void buffer_init(Buffer *buffer, uint32_t len);
+void buffer_init_or_clear(Buffer *buffer, uint32_t len);
 void buffer_free(Buffer *buffer);
 void buffer_clear(Buffer *buffer);
 void buffer_append(Buffer *buffer, const void *data, uint32_t len);
@@ -97,7 +102,9 @@ void buffer_put_char(Buffer *buffer, int value);
 uint32_t buffer_get_utf8(Buffer *buffer, Buffer *utf8, uint32_t len_hint);
 uint32_t buffer_get_latin1_as_utf8(Buffer *buffer, Buffer *utf8, uint32_t len_hint);
 uint32_t buffer_get_utf16_as_utf8(Buffer *buffer, Buffer *utf8, uint32_t len, uint8_t byteorder);
+#ifdef HAS_GUID
 void buffer_get_guid(Buffer *buffer, GUID *g);
+#endif
 int buffer_get_float32_le_ret(float *ret, Buffer *buffer);
 float buffer_get_float32_le(Buffer *buffer);
 float get_f32le(const void *vp);
@@ -105,6 +112,8 @@ int buffer_get_float32_ret(float *ret, Buffer *buffer);
 float buffer_get_float32(Buffer *buffer);
 float get_f32(const void *vp);
 double buffer_get_ieee_float(Buffer *buffer);
+void put_u16(void *vp, uint16_t v);
+void put_u32(void *vp, uint32_t v);
 uint32_t buffer_get_bits(Buffer *buffer, uint32_t bits);
 uint32_t buffer_get_syncsafe(Buffer *buffer, uint8_t bytes);
 

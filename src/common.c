@@ -26,17 +26,29 @@ _check_buf(PerlIO *infile, Buffer *buf, int min_wanted, int max_wanted)
   if ( buffer_len(buf) < min_wanted ) {
     // Read more data
     uint32_t read;
+    uint32_t actual_wanted;
     unsigned char *tmp;
+
+#ifdef _MSC_VER
+    uint32_t pos_check = PerlIO_tell(infile);
+#endif
     
     if (min_wanted > max_wanted) {
       max_wanted = min_wanted;
     }
+    
+    // Adjust actual amount to read by the amount we already have in the buffer
+    actual_wanted = max_wanted - buffer_len(buf);
 
-    New(0, tmp, max_wanted, unsigned char);
+    New(0, tmp, actual_wanted, unsigned char);
+    
+    DEBUG_TRACE("Buffering from file @ %d (min_wanted %d, max_wanted %d, adjusted to %d)\n",
+      (int)PerlIO_tell(infile), min_wanted, max_wanted, actual_wanted
+    );
 
-    if ( (read = PerlIO_read(infile, tmp, max_wanted)) == 0 ) {
+    if ( (read = PerlIO_read(infile, tmp, actual_wanted)) <= 0 ) {
       if ( PerlIO_error(infile) ) {
-        warn("Error reading: %s (wanted %d)\n", strerror(errno), max_wanted);
+        warn("Error reading: %s (wanted %d)\n", strerror(errno), actual_wanted);
       }
       else {
         warn("Error: Unable to read at least %d bytes from file.\n", min_wanted);
@@ -55,9 +67,15 @@ _check_buf(PerlIO *infile, Buffer *buf, int min_wanted, int max_wanted)
       goto out;
     }
 
-    DEBUG_TRACE("Buffered %d bytes from file @ %d (min_wanted %d, max_wanted %d)\n",
-      read, (int)PerlIO_tell(infile) - read, min_wanted, max_wanted
-    );
+#ifdef _MSC_VER
+    // Bug 16095, weird off-by-one bug seen only on Win32 and only when reading a filehandle
+    if (PerlIO_tell(infile) != pos_check + read) {
+      //PerlIO_printf(PerlIO_stderr(), "Win32 bug, pos should be %d, but was %d\n", pos_check + read, PerlIO_tell(infile));
+      PerlIO_seek(infile, pos_check + read, SEEK_SET);
+    }
+#endif
+
+    DEBUG_TRACE("Buffered %d bytes, new pos %d\n", read, (int)PerlIO_tell(infile));
 
 out:
     Safefree(tmp);

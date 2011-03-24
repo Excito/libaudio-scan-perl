@@ -2,7 +2,7 @@ use strict;
 
 use File::Spec::Functions;
 use FindBin ();
-use Test::More tests => 346;
+use Test::More tests => 366;
 
 use Audio::Scan;
 
@@ -93,6 +93,7 @@ eval {
     is( $info->{vbr}, 1, 'LAME VBR flag ok' );
     is( $info->{lame_preset}, 'ABR 40', 'LAME preset ok' );
     is( $info->{lame_replay_gain_radio}, '-4.6 dB', 'LAME ReplayGain ok' );
+    is( $info->{song_length_ms}, 1024, 'LAME VBR song_length_ms ok' );
 }
 
 # MPEG2, Layer 3, 320k / 44.1kHz CBR with LAME Info tag
@@ -105,6 +106,7 @@ eval {
     is( $info->{samplerate}, 44100, 'CBR file samplerate ok' );
     is( $info->{vbr}, undef, 'CBR file does not have VBR flag' );
     is( $info->{lame_encoder_version}, 'LAME3.97 ', 'CBR file LAME Info tag version ok' );
+    is( $info->{song_length_ms}, 1044, 'CBR file song_length_ms ok' );
 }
 
 # Non-Xing/LAME VBR file to test average bitrate calculation
@@ -114,6 +116,7 @@ eval {
     my $info = $s->{info};
     
     is( $info->{bitrate}, 215000, 'Non-Xing VBR average bitrate calc ok' );
+    is( $info->{song_length_ms}, 4974, 'Non-Xing VBR song_length_ms ok' );
 }
 
 # File with no audio frames, test is rejected properly
@@ -825,7 +828,7 @@ eval {
     is( $info->{audio_offset}, 4896, 'Bug 12409 audio offset ok' );
     is( $info->{bitrate}, 128000, 'Bug 12409 bitrate ok' );
     is( $info->{lame_encoder_version}, 'LAME3.96r', 'Bug 12409 encoder version ok' );
-    is( $info->{song_length_ms}, 244464, 'Bug 12409 song length ok' );
+    is( $info->{song_length_ms}, 244382, 'Bug 12409 song length ok' );
 }
 
 # Bug 9942, APE tag with no ID3v1 tag and multiple tags
@@ -1006,6 +1009,18 @@ eval {
     is( $tags->{TPE1}, 'Artist', 'v2.4 unsync TPE1 ok' );
 }
 
+# v2.3 whole tag unsynchronisation
+{
+    my $s = Audio::Scan->scan( _f('v2.3-unsync.mp3') );
+    my $tags = $s->{tags};
+    
+    is( $tags->{TALB}, 'Hydroponic Garden', 'v2.3 unsync TALB ok' );
+    is( $tags->{TCON}, 'Ambient', 'v2.3 unsync TCON ok' );
+    is( $tags->{TPE1}, 'Carbon Based Lifeforms', 'v2.3 unsync TPE1 ok' );
+    is( $tags->{TPE2}, 'Carbon Based Lifeforms', 'v2.3 unsync TPE2 ok' );
+    is( $tags->{TRCK}, 4, 'v2.3 unsync TRCK ok' );
+}
+
 # v2.3 frame compression
 {
     my $s = Audio::Scan->scan( _f('v2.3-compressed-frame.mp3') );
@@ -1152,6 +1167,63 @@ eval {
     
     ok ( !exists $tags->{TPE3}, 'v2.4 empty text TPE3 frame not present' );
     is( $tags->{CATALOGNUMBER}, 'DUKE149D', 'v2.4 empty text next frame ok' );
+}
+
+# Bug 15992, v2.3 + v1.1 + APEv2 + Lyricsv2
+{
+    my $s = Audio::Scan->scan( _f('v2.3-apev2-lyricsv2.mp3') );
+    my $info = $s->{info};
+    my $tags = $s->{tags};
+    
+    is( $info->{id3_version}, 'ID3v2.3.0, ID3v1.1', 'v2.3 APEv2+Lyricsv2 id3_version ok' );
+    is( $info->{ape_version}, 'APEv2', 'v2.3 APEv2+Lyricsv2 ape_version ok' );
+    is( $tags->{TIT2}, 'Fifteen Floors', 'v2.3 APEv2+Lyricsv2 TIT2 ok' );
+    is( $tags->{REPLAYGAIN_TRACK_PEAK}, '1.077664', 'v2.3 APEv2+Lyricsv2 REPLAYGAIN_TRACK_PEAK ok' );
+}
+
+# Bug 16056, v2.4 + APEv2 with invalid key
+{
+    # Hide stderr
+    no strict 'subs';
+    no warnings;
+    open OLD_STDERR, '>&', STDERR;
+    close STDERR;
+    
+    my $s = Audio::Scan->scan( _f('v2.4-ape-invalid-key.mp3') );
+    my $tags = $s->{tags};
+    
+    is( $tags->{REPLAYGAIN_ALBUM_GAIN}, '-1.720000 dB', 'v2.4 APE invalid key tag read ok' );
+    
+    # Restore stderr
+    open STDERR, '>&', OLD_STDERR;
+}
+
+# Bug 16073, zero-byte frames
+{
+    my $s = Audio::Scan->scan( _f('v2.3-zero-frame.mp3') );
+    my $tags = $s->{tags};
+    
+    ok( !exists $tags->{WCOM}, 'v2.3 zero-frame WCOM not present ok' );
+    is( $tags->{TDRC}, 1982, 'v2.3 zero-frame TDRC ok' );
+}
+
+# Bug 16079, TCON with BOM but no text
+{
+    my $s = Audio::Scan->scan( _f('v2.3-empty-tcon2.mp3') );
+    my $tags = $s->{tags};
+    
+    ok( !exists $tags->{TCON}, 'v2.3 empty TCON not present ok' );
+    is( $tags->{TALB}, 'Unbekanntes Album', 'v2.3 empty TCON TALB ok' );
+}
+
+# RT 57664, invalid AENC tag
+{
+    my $s = Audio::Scan->scan( _f('v2.3-invalid-aenc.mp3') );
+    my $tags = $s->{tags};
+    
+    is( $tags->{TALB}, 'Pure Atmosphere', 'v2.3 invalid AENC TALB ok' );
+    is( length($tags->{TPE4}), 26939, 'v2.3 invalid AENC TPE4 ok' );
+    is( length($tags->{AENC}->[0]), 10600, 'v2.3 invalid AENC AENC ok' );
 }
 
 sub _f {    
