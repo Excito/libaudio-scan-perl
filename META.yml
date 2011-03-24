@@ -1,0 +1,13 @@
+--- #YAML:1.0
+name:                Audio-Scan
+version:             0.42
+abstract:            XS parser for MP3, MP4, Ogg Vorbis, FLAC, ASF, WAV, AIFF, Musepack, Monkey's Audio
+license:             ~
+author:              
+    - Andy Grundman <andy@slimdevices.com>
+generated_by:        ExtUtils::MakeMaker version 6.42
+distribution_type:   module
+requires:     
+meta-spec:
+    url:     http://module-build.sourceforge.net/META-spec-v1.3.html
+    version: 1.3
