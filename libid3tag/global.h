@@ -16,7 +16,7 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
- * $Id: global.h 185 2009-04-07 15:38:04Z andy $
+ * $Id: /sd/opensource/trunk/Audio-Scan/libid3tag/global.h 59471 2009-10-13T14:39:35.686417Z andy  $
  */
 
 # ifndef LIBID3TAG_GLOBAL_H
@@ -24,6 +24,17 @@
 
 #ifdef _MSC_VER
 #include "perl.h"
+#endif
+
+/* trace debugging */
+
+//#define TRACE_DEBUG
+
+#ifdef TRACE_DEBUG
+# include <stdio.h>
+# define DEBUG_TRACE(...) fprintf(stderr, __VA_ARGS__)
+#else
+# define DEBUG_TRACE(...)
 #endif
 
 /* conditional debugging */

@@ -16,7 +16,7 @@
 ## along with this program; if not, write to the Free Software
 ## Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 ##
-## $Id: Makefile.am 127 2009-04-02 14:42:16Z andy $
+## $Id: /sd/opensource/trunk/Audio-Scan/libid3tag/Makefile.am 59580 2009-10-16T18:27:19.602944Z andy  $
 ##
 
 ## Process this file with automake to produce Makefile.in
@@ -93,25 +93,6 @@ EXTRA_libid3tag_la_SOURCES =  \
 libid3tag_la_LDFLAGS =	-version-info $(version_info)
 
 BUILT_SOURCES =		frametype.c compat.c genre.dat
-
-$(srcdir)/frametype.c: $(srcdir)/frametype.gperf Makefile.am
-	cd $(srcdir) &&  \
-	gperf -tCcTonD -K id -N id3_frametype_lookup -s -3 -k '*'  \
-		frametype.gperf |  \
-	sed -e 's/\(struct id3_frametype\);/\1/' |  \
-	sed -e '/\$$''Id: /s/\$$//g' >frametype.c
-
-$(srcdir)/compat.c: $(srcdir)/compat.gperf Makefile.am
-	cd $(srcdir) &&  \
-	gperf -tCcTonD -K id -N id3_compat_lookup -s -3 -k '*'  \
-		compat.gperf |  \
-	sed -e 's/\(struct id3_compat\);/\1/' |  \
-	sed -e '/\$$''Id: /s/\$$//g' >compat.c
-
-$(srcdir)/genre.dat: $(srcdir)/genre.dat.in $(srcdir)/genre.dat.sed Makefile.am
-	cd $(srcdir) &&  \
-	sed -n -f genre.dat.sed genre.dat.in |  \
-	sed -e '/\$$''Id: /s/\$$//g' >genre.dat
 
 libtool: $(LIBTOOL_DEPS)
 	$(SHELL) ./config.status --recheck
