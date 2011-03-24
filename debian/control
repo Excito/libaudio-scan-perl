@@ -1,7 +1,7 @@
 Source: libaudio-scan-perl
 Section: perl
 Priority: optional
-Build-Depends: debhelper (>= 7.2), perl (>= 5.6.0-12), zlib1g-dev
+Build-Depends: debhelper (>= 7.2), perl (>= 5.6.0-12), zlib1g-dev, libtest-warn-perl
 Maintainer: Carl Fürstenberg <carl@excito.com>
 Standards-Version: 3.9.1
 Homepage: http://search.cpan.org/dist/Audio-Scan/
