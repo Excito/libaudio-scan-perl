@@ -2,19 +2,21 @@ use strict;
 
 use File::Spec::Functions;
 use FindBin ();
-use Test::More tests => 109;
+use Test::More tests => 112;
 
 use Audio::Scan;
 
 # AAC file from iTunes 8.1.1
 {
-    my $s = Audio::Scan->scan( _f('itunes811.m4a') );
+    my $s = Audio::Scan->scan( _f('itunes811.m4a'), { md5_size => 4096 } );
     
     my $info  = $s->{info};
     my $tags  = $s->{tags};
     my $track = $info->{tracks}->[0];
     
     is( $info->{audio_offset}, 6169, 'Audio offset ok' );
+    is( $info->{audio_size}, 320, 'Audio size ok' );
+    is( $info->{audio_md5}, '9bf0388a5bfd81c857fdce52dac9ce7f', 'Audio MD5 ok' );
     is( $info->{compatible_brands}->[0], 'M4A ', 'Compatible brand 1 ok' );
     is( $info->{compatible_brands}->[1], 'mp42', 'Compatible brand 2 ok' );
     is( $info->{compatible_brands}->[2], 'isom', 'Compatible brand 3 ok' );
@@ -152,6 +154,7 @@ use Audio::Scan;
 	my $tags = $s->{tags};
 	
 	is( $tags->{COVR}, 2103, 'COVR with AUDIO_SCAN_NO_ARTWORK ok' );
+	is( $tags->{COVR_offset}, 1926, 'COVR with AUDIO_SCAN_NO_ARTWORK offset ok' );
 }
 
 # File with array keys that are integers, bug 14462

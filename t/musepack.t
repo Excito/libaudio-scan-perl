@@ -2,18 +2,20 @@ use strict;
 
 use File::Spec::Functions;
 use FindBin ();
-use Test::More tests => 31;
+use Test::More tests => 34;
 
 use Audio::Scan;
 
 # SV7 file with APEv2 tags
 {
-    my $s = Audio::Scan->scan( _f('apev2.mpc') );
+    my $s = Audio::Scan->scan( _f('apev2.mpc'), { md5_size => 51581 } );
     
     my $info = $s->{info};
     my $tags = $s->{tags};
     
     is( $info->{audio_offset}, 24, 'Audio offset ok' );
+    is( $info->{audio_size}, 51581, 'Audio size ok' );
+    is( $info->{audio_md5}, '62fc45d1283233d8f03c199a5dece1f9', 'Audio MD5 ok' );
     is( $info->{bitrate}, 692, 'Bitrate ok' );
     is( $info->{file_size}, 51782, 'File size ok' );
     is( $info->{profile}, 'Extreme (q=6)', 'Profile ok' );
@@ -69,6 +71,7 @@ use Audio::Scan;
     is( $tags->{ALBUM}, 'Cover Art Test', 'APEv2 AUDIO_SCAN_NO_ARTWORK album ok' );
     is( $tags->{ARTIST}, 'Kraftwerk', 'APEv2 AUDIO_SCAN_NO_ARTWORK artist ok' );
     is( $tags->{'COVER ART (FRONT)'}, 1761, 'APEv2 AUDIO_SCAN_NO_ARTWORK cover length ok' );
+    is( $tags->{'COVER ART (FRONT)_offset'}, 68925, 'APEv2 AUDIO_SCAN_NO_ARTWORK cover offset ok' );
 }
 
 sub _f {

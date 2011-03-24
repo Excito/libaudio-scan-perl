@@ -273,12 +273,20 @@ _id3_parse_v2(id3info *id3)
     
     // We don't care about the value of the extended flags or CRC, so just read the size and skip it
     ehsize = buffer_get_int(id3->buf);
-    if ( !_check_buf(id3->infile, id3->buf, ehsize, ID3_BLOCK_SIZE) ) {
+    
+    // ehsize may be invalid, tested with v2.3-ext-header-invalid.mp3
+    if (ehsize > id3->size_remain - 4) {
+      warn("Error: Invalid ID3 extended header size (%s)\n", id3->file);
       ret = 0;
       goto out;
     }
     
     DEBUG_TRACE("  Skipping extended header, size %d\n", ehsize);
+    
+    if ( !_check_buf(id3->infile, id3->buf, ehsize, ID3_BLOCK_SIZE) ) {
+      ret = 0;
+      goto out;
+    }
     buffer_consume(id3->buf, ehsize);
     
     id3->size_remain -= ehsize + 4;
@@ -331,6 +339,9 @@ _id3_parse_v2_frame(id3info *id3)
   
   // If the frame is compressed, it will be decompressed here
   Buffer *decompressed = 0;
+  
+  // tag_data_safe flag is used if skipping artwork and artwork is not raw image data (needs unsync)
+  id3->tag_data_safe = 1;
   
   if ( !_check_buf(id3->infile, id3->buf, 10, ID3_BLOCK_SIZE) ) {
     ret = 0;
@@ -580,6 +591,8 @@ _id3_parse_v2_frame(id3info *id3)
           // Reset decoded_size to 0 since we aren't actually decoding.
           // XXX this would break if we have a compressed + unsync APIC frame but not very likely in the real world
           decoded_size = 0;
+          
+          id3->tag_data_safe = 0;
         }
         else {
           // tested with v2.4-unsync.mp3
@@ -926,12 +939,21 @@ _id3_parse_v2_frame_data(id3info *id3, char const *id, uint32_t size, id3_framet
           
           if (array != NULL && value != NULL && SvPOK(value)) {
             // second+ string, add to array
-            av_push(array, value);
+            // Bug 16452, do not add a null string
+            if (sv_len(value) > 0)
+              av_push(array, value);
           }
         }
         
         if (array != NULL) {
-          my_hv_store( id3->tags, id, newRV_noinc( (SV *)array ) );
+          if (av_len(array) == 0) {
+            // Handle the case where we have multiple empty strings leaving an array of 1
+            my_hv_store( id3->tags, id, av_shift(array) );
+            SvREFCNT_dec(array);
+          }
+          else {
+            my_hv_store( id3->tags, id, newRV_noinc( (SV *)array ) );
+          }
         }
         else if (value != NULL && SvPOK(value)) {
           my_hv_store( id3->tags, id, value );
@@ -1134,6 +1156,11 @@ _id3_parse_v2_frame_data(id3info *id3, char const *id, uint32_t size, id3_framet
           // Special handling for APIC tags when in skip_art mode
           if (skip_art) {
             av_push( framedata, newSVuv(size - read) );
+            
+            // Record offset of APIC image data too, unless the data needs to be unsynchronized or is empty
+            if (id3->tag_data_safe && (size - read) > 0)
+              av_push( framedata, newSVuv(id3->size - id3->size_remain + read) );
+            
             _id3_skip(id3, size - read);
             read = size;
           }

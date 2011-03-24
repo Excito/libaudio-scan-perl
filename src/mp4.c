@@ -818,6 +818,7 @@ _mp4_read_box(mp4info *mp4)
     
     // Record audio offset and length
     my_hv_store( mp4->info, "audio_offset", newSVuv(mp4->audio_offset) );
+    my_hv_store( mp4->info, "audio_size", newSVuv(size) );
     mp4->audio_size = size;
   }
   else {
@@ -1559,6 +1560,9 @@ _mp4_parse_ilst_data(mp4info *mp4, uint32_t size, SV *key)
   if ( FOURCC_EQ(ckey, "COVR") && _env_true("AUDIO_SCAN_NO_ARTWORK") ) {
     // Skip artwork if requested and avoid the memory cost
     value = newSVuv(size - 8);
+    
+    my_hv_store( mp4->tags, "COVR_offset", newSVuv(mp4->audio_offset + (mp4->size - mp4->rsize) + 24) );
+    
     _mp4_skip(mp4, size);
   }
   else {

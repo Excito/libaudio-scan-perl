@@ -9,6 +9,7 @@ include/common.h
 include/flac.h
 include/id3.h
 include/mac.h
+include/md5.h
 include/mp3.h
 include/mp4.h
 include/mpc.h
@@ -37,6 +38,7 @@ src/id3_frametype.c
 src/id3_frametype.gperf
 src/id3_genre.dat
 src/mac.c
+src/md5.c
 src/mp3.c
 src/mp4.c
 src/mpc.c
@@ -65,6 +67,7 @@ t/aac/id3v2.aac
 t/aac/leading-junk.aac
 t/aac/mono.aac
 t/aac/stereo.aac
+t/aac/truncated.aac
 t/aiff/aiff-id3.aif
 t/aiff/aiff-id3-bad-chunksize.aif
 t/aiff/aiff32.aiff
@@ -98,6 +101,7 @@ t/mac/apev1.ape
 t/mac/apev2.ape
 t/mp3/ape-no-v1.mp3
 t/mp3/ape-v1.mp3
+t/mp3/bad-first-samplerate.mp3
 t/mp3/bug5686/latin/good.mp3
 t/mp3/bug5686/utf/invalid.mp3
 t/mp3/gentoo-bug-210564.mp3
@@ -122,6 +126,7 @@ t/mp3/v2-v1.mp3
 t/mp3/v2.2-itunes81.mp3
 t/mp3/v2.2-mpeg20-xing.mp3
 t/mp3/v2.2-multiple-comm.mp3
+t/mp3/v2.2-multiple-null-strings.mp3
 t/mp3/v2.2-pic.mp3
 t/mp3/v2.2.mp3
 t/mp3/v2.3-apev2-lyricsv2.mp3
@@ -132,6 +137,7 @@ t/mp3/v2.3-empty-wxxx.mp3
 t/mp3/v2.3-encrypted-frame.mp3
 t/mp3/v2.3-etco.mp3
 t/mp3/v2.3-ext-header.mp3
+t/mp3/v2.3-ext-header-invalid.mp3
 t/mp3/v2.3-group-id.mp3
 t/mp3/v2.3-invalid-aenc.mp3
 t/mp3/v2.3-invalid-encoding.mp3
@@ -154,6 +160,7 @@ t/mp3/v2.3-unsync.mp3
 t/mp3/v2.3-utf16any.mp3
 t/mp3/v2.3-utf16be.mp3
 t/mp3/v2.3-utf16le.mp3
+t/mp3/v2.3-xing-no-lame.mp3
 t/mp3/v2.3-xsop.mp3
 t/mp3/v2.3-zero-frame.mp3
 t/mp3/v2.3.mp3

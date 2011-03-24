@@ -90,6 +90,7 @@ get_aacinfo(PerlIO *infile, char *file, HV *info, HV *tags)
 */
   
   my_hv_store( info, "audio_offset", newSVuv(audio_offset) );
+  my_hv_store( info, "audio_size", newSVuv(file_size - audio_offset) );
   
   // Parse ID3 at end
   if (id3_size) {
@@ -147,6 +148,10 @@ aac_parse_adts(PerlIO *infile, char *file, off_t audio_size, Buffer *buf, HV *in
 
     buffer_consume(buf, frame_length);
     audio_size -= frame_length;
+    
+    // Avoid looping again if we have a partial frame header
+    if (audio_size < 6)
+      break;
   }
   
   frames_per_sec = (float)samplerate/1024.0f;
@@ -161,6 +166,10 @@ aac_parse_adts(PerlIO *infile, char *file, off_t audio_size, Buffer *buf, HV *in
     length = (float)frames/frames_per_sec;
   else
     length = 1;
+  
+  // Samplerate <= 24000 is AACplus and the samplerate is doubled
+  if (samplerate <= 24000)
+    samplerate *= 2;
   
   my_hv_store( info, "bitrate", newSVuv(bitrate * 1000) );
   my_hv_store( info, "song_length_ms", newSVuv(length * 1000) );

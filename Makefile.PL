@@ -11,7 +11,8 @@ if ( $^O !~ /Win32/ ) {
     push @LIBS, '-lz';
 }
 
-my $DEFINES = '-Wall' unless $^O =~ /sun|solaris/i;
+my $DEFINES = '-O2';
+$DEFINES .= ' -Wall' unless $^O =~ /sun|solaris/i;
 $DEFINES .= ' -Wno-unused-value -Wno-format-security' unless $^O =~ /Win32|sun|solaris/i;
 
 # we want to put the local include dirs in front since the flac include dir possibly added above
@@ -30,7 +31,7 @@ my $src_files = join(' ', glob 'src/*.c');
 WriteMakefile(
     NAME              => 'Audio::Scan',
     VERSION_FROM      => 'lib/Audio/Scan.pm',
-    PREREQ_PM         => {},
+    PREREQ_PM         => { 'Test::Warn' => 0 },
     ABSTRACT_FROM     => 'lib/Audio/Scan.pm',
     AUTHOR            => 'Andy Grundman <andy@slimdevices.com>',
     INC               => join(' ', @INC),
