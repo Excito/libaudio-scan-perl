@@ -97,6 +97,7 @@ t/flac/tiny.flac
 t/mac/apev1.ape
 t/mac/apev2.ape
 t/mp3/ape-no-v1.mp3
+t/mp3/ape-v1.mp3
 t/mp3/bug5686/latin/good.mp3
 t/mp3/bug5686/utf/invalid.mp3
 t/mp3/gentoo-bug-210564.mp3
@@ -134,6 +135,7 @@ t/mp3/v2.3-ext-header.mp3
 t/mp3/v2.3-group-id.mp3
 t/mp3/v2.3-invalid-aenc.mp3
 t/mp3/v2.3-invalid-encoding.mp3
+t/mp3/v2.3-invalid-rvad.mp3
 t/mp3/v2.3-iso-8859-1.mp3
 t/mp3/v2.3-itunes81.mp3
 t/mp3/v2.3-link-frame.mp3

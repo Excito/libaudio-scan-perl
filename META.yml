@@ -1,6 +1,6 @@
 --- #YAML:1.0
 name:               Audio-Scan
-version:            0.82
+version:            0.83
 abstract:           Fast C metadata and tag reader for all common audio file formats
 author:
     - Andy Grundman <andy@slimdevices.com>
