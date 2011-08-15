@@ -21,7 +21,7 @@
   ghost@aladdin.com
 
  */
-/* $Id: md5.c 740 2010-08-27 17:25:28Z agrundman $ */
+/* $Id: /sd/opensource/trunk/Audio-Scan/src/md5.c 73121 2010-08-27T17:25:28.767822Z agrundman  $ */
 /*
   Independent implementation of MD5 (RFC 1321).
 
