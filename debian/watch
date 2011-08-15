@@ -1,4 +1,4 @@
 version=3
 opts=dversionmangle=s/\+dfsg// \
-http://search.cpan.org/dist/Audio-Scan/   .*/Audio-Scan-v?(\d[\d.-]+)\.(?:tar(?:\.gz|\.bz2)?|tgz|zip)$ \
+http://www.cpan.org/modules/by-module/Audio/Audio-Scan-v?(\d[\d.-]+)\.(?:tar(?:\.gz|\.bz2)?|tgz|zip)$ \
 debian sh debian/repack.stub
