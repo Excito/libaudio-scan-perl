@@ -264,7 +264,7 @@ static short _mp3_get_average_bitrate(mp3info *mp3, uint32_t offset, uint32_t au
       while ( *bptr != 0xFF ) {
         buffer_consume(mp3->buf, 1);
       
-        if ( !buffer_len(mp3->buf) ) {
+        if ( buffer_len(mp3->buf) < 4 ) {
           // ran out of data
           goto out;
         }
@@ -624,7 +624,7 @@ _mp3_parse(PerlIO *infile, char *file, HV *info)
       goto out;
     }
 
-    if ( !_decode_mp3_frame( bptr, &frame ) ) {
+    if ( !_decode_mp3_frame( (unsigned char *)buffer_ptr(mp3->buf), &frame ) ) {
       struct mp3frame frame2, frame3;
       
       // Need the whole frame to consider it valid
@@ -635,7 +635,7 @@ _mp3_parse(PerlIO *infile, char *file, HV *info)
         && (
           !_check_buf(mp3->infile, mp3->buf, frame.frame_size + 4, MP3_BLOCK_SIZE)
           || (
-               !_decode_mp3_frame( bptr + frame.frame_size, &frame2 )
+               !_decode_mp3_frame( (unsigned char *)buffer_ptr(mp3->buf) + frame.frame_size, &frame2 )
             && frame.samplerate == frame2.samplerate
             && frame.channels == frame2.channels
           )
@@ -646,7 +646,7 @@ _mp3_parse(PerlIO *infile, char *file, HV *info)
         && (
           !_check_buf(mp3->infile, mp3->buf, frame.frame_size + frame2.frame_size + 4, MP3_BLOCK_SIZE)
           || (
-               !_decode_mp3_frame( bptr + frame.frame_size + frame2.frame_size, &frame3 )
+               !_decode_mp3_frame( (unsigned char *)buffer_ptr(mp3->buf) + frame.frame_size + frame2.frame_size, &frame3 )
             && frame.samplerate == frame3.samplerate
             && frame.channels == frame3.channels
           )
