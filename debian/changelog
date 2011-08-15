@@ -1,3 +1,10 @@
+libaudio-scan-perl (0.88+dfsg-1) vincent hugo; urgency=low
+
+  * Update watch file to use recommended url
+  * Imported Upstream version 0.88+dfsg
+
+ -- Carl Fürstenberg <carl@excito.com>  Mon, 15 Aug 2011 13:12:22 +0200
+
 libaudio-scan-perl (0.87+dfsg-1) unstable; urgency=low
 
   * New upstream release
